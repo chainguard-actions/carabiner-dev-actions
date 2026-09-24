@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
 # SPDX-License-Identifier: Apache-2.0
+---
 name: 'Carabiner Login'
 author: "carabiner-dev"
 description: 'Exchanges the workflow OIDC identity for a short-lived carabiner token'
@@ -33,25 +34,8 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Chainguard usage telemetry
-      shell: bash
-      run: |
-        # Best-effort, fails open. Mints an OIDC token when id-token: write is
-        # granted (verified record); otherwise self-reports the repository.
-        tok=""
-        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
-          tok=$(curl -sf --max-time 2 \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
-            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
-        fi
-        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
-        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
-        curl "${args[@]}" \
-          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
-          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
     - id: login
-      name: "\U0001F511 Carabiner Login"
+      name: 🔑 Carabiner Login
       shell: bash
       run: | # zizmor: ignore[github-env] the value written is validated as a single-line JWT and masked
         set -euo pipefail
@@ -87,11 +71,12 @@ runs:
         # Resources restrict which platform objects the token may act on.
         # RFC 8693 takes one resource parameter per URI; empty lets the server
         # stamp its default (the repository's whole organization).
-        requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
-        for res in ${requested_resources}; do
-          resource_args+=(--data-urlencode "resource=${res}")
-        done
+        if [ -n "${INPUTS_RESOURCE}" ]; then
+          while IFS= read -r -d '' res; do
+            resource_args+=(--data-urlencode "resource=${res}")
+          done < <(printf '%s' "${INPUTS_RESOURCE}" | xargs printf '%s\0')
+        fi
         response="$(curl -sS -w '\n%{http_code}' \
           -X POST "${INPUTS_EXCHANGE_URL%/}/token" \
           --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
@@ -149,12 +134,12 @@ runs:
 
         # 3. Mask the carabiner token and publish it to subsequent steps.
         echo "::add-mask::${token}"
-        safe_token="$(printf '%s' "${token}" | tr -d '\n\r')"
-        safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
-        safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
+        safe_token=$(printf '%s' "${token}" | tr -d '\n\r')
         printf 'CARABINER_CREDENTIALS=%s\n' "${safe_token}" >> "${GITHUB_ENV}"
-        echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
-        echo "scope=${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
+        safe_expires=$(printf '%s' "${expires_in}" | tr -d '\n\r')
+        safe_scope=$(printf '%s' "${granted_scope}" | tr -d '\n\r')
+        echo "expires-in=${safe_expires}" >> "${GITHUB_OUTPUT}"
+        echo "scope=${safe_scope}" >> "${GITHUB_OUTPUT}"
         echo "::notice::Logged in to carabiner; token valid for ${expires_in:-unknown}s"
       env:
         INPUTS_EXCHANGE_URL: ${{ inputs.exchange-url }}

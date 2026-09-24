@@ -16,27 +16,27 @@ Action **carabiner-dev--actions--drop/d41fe10fe88deaf493ce026007da73738b9f570c**
 
 ### github-env-injection (severity: high)
 
-The 'Validate install-dir' step writes a value derived from the untrusted input `inputs.install-dir` (via env var INPUTS_INSTALL_DIR) to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` sanitization. The case-based character validation excludes newlines, but the check requires explicit sanitization before every write to a special environment file when the source is workflow-controllable. Offending line: `echo "path=$dir" >> "$GITHUB_OUTPUT"`
+The 'Validate install-dir' step writes a value derived from `inputs.install-dir` (via the `$INPUTS_INSTALL_DIR` env var) to `$GITHUB_OUTPUT` without the required sanitization step (`printf '%s' ... | tr -d '\n\r'`). The character-set validation (`case "$INPUTS_INSTALL_DIR" in ''|*[!A-Za-z0-9._/$~-]*)`) does restrict the allowed characters, but the mandatory sanitization pipeline is absent before `echo "path=$dir" >> "$GITHUB_OUTPUT"`.
 
 Locations:
 
-- `install/action.yml:73`
+- `install/action.yml:79`
 
 ### github-env-injection (severity: high)
 
-The 'Add the install directory to the PATH' step (Linux/macOS) writes `${INSTALL_DIR}/bin` to $GITHUB_PATH where INSTALL_DIR is sourced from `steps.install-dir.outputs.path` (a steps.*.outputs.* value, which is workflow-controllable) without the required `printf '%s' ... | tr -d '\n\r'` sanitization. Offending line: `echo "${INSTALL_DIR}/bin" >> $GITHUB_PATH`
+The 'Add the install directory to the PATH' step (Linux/macOS) writes `${INSTALL_DIR}/bin` to `$GITHUB_PATH` without the required sanitization step (`printf '%s' ... | tr -d '\n\r'`). `INSTALL_DIR` is sourced from `steps.install-dir.outputs.path`, which is itself derived from the user-controlled `inputs.install-dir`. The `# zizmor: ignore` comment acknowledges the issue but does not replace the missing sanitization.
 
 Locations:
 
-- `install/action.yml:100`
+- `install/action.yml:92`
 
 ### github-env-injection (severity: high)
 
-The 'Add the install directory to the PATH' step (Windows/pwsh) writes a value derived from `inputs.install-dir` (via env var INPUTS_INSTALL_DIR) to $env:GITHUB_PATH without the required sanitization. Offending line: `echo "$dir/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append`
+The 'Add the install directory to the PATH' step (Windows/pwsh) writes a value derived from `inputs.install-dir` (via `$env:INPUTS_INSTALL_DIR`) to `$env:GITHUB_PATH` using `Out-File -Append` without the required sanitization. The `# zizmor: ignore` comment acknowledges the issue but does not replace the missing sanitization.
 
 Locations:
 
-- `install/action.yml:110`
+- `install/action.yml:98`
 
 ## Iteration Notes
 
@@ -47,7 +47,7 @@ Locations:
 **Notes:**
 
 Fixed all three github-env-injection findings in hardened/action/install/action.yml:
-1. 'Validate install-dir' step (line 73): Added `safe_dir=$(printf '%s' "$dir" | tr -d '\n\r')` and write `$safe_dir` to $GITHUB_OUTPUT instead of raw `$dir`.
-2. 'Add the install directory to the PATH' (Linux/macOS, line 100): Expanded to multi-line run block with `safe_dir=$(printf '%s' "${INSTALL_DIR}/bin" | tr -d '\n\r')` before writing to $GITHUB_PATH.
-3. 'Add the install directory to the PATH' (Windows/pwsh, line 110): Added PowerShell sanitization `$safe = ("$dir/bin" -replace "`r","" -replace "`n","")` and used `Add-Content` to write the sanitized value to $env:GITHUB_PATH.
+1. Line 79 ('Validate install-dir' step): Added `safe_dir=$(printf '%s' "$dir" | tr -d '\n\r')` and used `$safe_dir` when writing to $GITHUB_OUTPUT.
+2. Line 92 (Linux/macOS PATH step): Replaced single-line echo with a multi-line block that sanitizes `${INSTALL_DIR}/bin` via `printf '%s' ... | tr -d '\n\r'` before writing to $GITHUB_PATH.
+3. Line 98 (Windows/pwsh PATH step): Added PowerShell sanitization using `-replace` to strip newlines/carriage returns from the path value before writing to $GITHUB_PATH via Out-File.
 

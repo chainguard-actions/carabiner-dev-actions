@@ -161,7 +161,7 @@ runs:
         if ($dir -eq '$HOME' -or $dir.StartsWith('$HOME/')) { $dir = $HOME + $dir.Substring(5) }
         elseif ($dir -eq '~' -or $dir.StartsWith('~/')) { $dir = $HOME + $dir.Substring(1) }
         $safe = ("$dir/bin" -replace "`r","" -replace "`n","")
-        Add-Content -Path $env:GITHUB_PATH -Value $safe -Encoding utf8
+        $safe | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       shell: pwsh
       env:
         INPUTS_INSTALL_DIR: ${{ inputs.install-dir }}
