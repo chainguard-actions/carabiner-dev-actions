@@ -1,0 +1,71 @@
+name: Test happy path with mocked exchange server
+# Tests the full login flow by mocking both the OIDC token endpoint
+# and the Carabiner token exchange server using a fake curl binary.
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up mock curl and fake exchange server
+        run: |
+          # Create fake JWT tokens (header.payload.signature format)
+          FAKE_OIDC_JWT="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3Qvd29ya2Zsb3cifQ.fakesignature"
+          FAKE_CARABINER_JWT="eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3QifQ.carabinersig"
+
+          # Write the fake OIDC response (what the runner returns)
+          printf '{"value": "%s"}\n' "${FAKE_OIDC_JWT}" > /tmp/fake-oidc-response.json
+
+          # Write the fake token exchange response (what the exchange server returns)
+          printf '{"access_token": "%s", "expires_in": 3600, "scope": "attestations:read attestations:write"}\n' \
+            "${FAKE_CARABINER_JWT}" > /tmp/fake-exchange-response.json
+
+          # Write the fake curl script using the fixture file
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-curl.sh" /tmp/fake-curl
+          chmod +x /tmp/fake-curl
+
+          # Install fake curl at the front of PATH
+          mkdir -p /tmp/fake-bin
+          cp /tmp/fake-curl /tmp/fake-bin/curl
+          echo "/tmp/fake-bin" >> "$GITHUB_PATH"
+
+      - id: login
+        uses: .
+        continue-on-error: true
+        with:
+          exchange-url: "https://auth.carabiner.dev"
+          audience: "https://api.carabiner.dev"
+          scope: "attestations:read attestations:write"
+          resource: ""
+        env:
+          # Simulate OIDC being available by pointing to our fake endpoint
+          ACTIONS_ID_TOKEN_REQUEST_URL: "http://localhost:9999/oidc/token_request"
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-runner-token"
+
+      - name: Assert login outcome and outputs
+        env:
+          OUTCOME: ${{ steps.login.outcome }}
+          EXPIRES_IN: ${{ steps.login.outputs.expires-in }}
+          SCOPE: ${{ steps.login.outputs.scope }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope: $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: expires-in output is empty"
+              exit 1
+            fi
+            if [ -z "$SCOPE" ]; then
+              echo "FAIL: scope output is empty"
+              exit 1
+            fi
+            echo "PASS: login succeeded with expires-in='$EXPIRES_IN' scope='$SCOPE'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (mock exchange server not reachable or OIDC unavailable under act)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

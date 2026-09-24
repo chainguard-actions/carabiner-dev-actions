@@ -1,1 +1,453 @@
-# carabiner-dev-actions
+# Carabiner Actions
+
+This repository contains reusable GitHub Actions for various tools in the
+Carabiner ecosystem. These actions help streamline security policy verification,
+attestation management, and supply chain security workflows.
+
+> [!NOTE]
+> The composite actions here compose one another through GitHub's `$/`
+> same-repository syntax, so every internal step resolves to the same commit
+> the caller pinned. The `$/` syntax is not available in GitHub Enterprise
+> Server, and on github.com it requires an Actions runner on version 2.336.0
+> or newer.
+
+## Actions
+
+### login
+
+The `login` action exchanges the workflow's GitHub OIDC identity for a
+short-lived Carabiner token via the Carabiner token exchange server
+(`auth.carabiner.dev` by default). The token is masked and exported as the
+`CARABINER_CREDENTIALS` environment variable so later steps and Carabiner tools
+can use it.
+
+The exchange only succeeds when the repository's GitHub organization is claimed
+as a namespace by a Carabiner organization **and** the repository has a
+monitored pipeline; otherwise no token is issued. The issued token's lifetime is
+paired to the workflow's OIDC token.
+
+#### Usage
+
+The calling job must grant `id-token: write` so the action can mint a workflow
+OIDC token:
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required to mint the workflow OIDC token
+      contents: read
+    steps:
+      - uses: carabiner-dev/actions/login@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+      # CARABINER_CREDENTIALS is now set for subsequent steps
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `exchange-url` | No | `https://auth.carabiner.dev` | Base URL of the Carabiner token exchange server. The workflow OIDC token is minted for this audience. |
+| `audience` | No | `https://api.carabiner.dev` | Audience (a Carabiner service URL) to request the token for. |
+| `scope` | No | `attestations:read attestations:write` | Space-separated capability scopes to request. The issued token carries the intersection of the requested and granted scopes; set empty for an identity-only token. |
+
+#### Outputs
+
+| Output | Description |
+| --- | --- |
+| `expires-in` | Lifetime of the issued Carabiner token, in seconds. |
+| `scope` | Space-separated scopes granted on the issued token (may be empty). |
+
+See the [login README](login/README.md) for the full flow, security notes, and
+troubleshooting.
+
+### ampel/verify
+
+The `ampel/verify` action verifies a subject (file or hash) against a security
+policy using the 🔴🟡🟢 AMPEL supply chain policy engine. This action evaluates
+whether a given artifact meets your defined security requirements by analyzing
+its attestations against a policy.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/ampel/verify@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    policy: 'path/to/policy.yaml'   # URI or path to policy code
+    subject: 'path/to/artifact'     # or digest, eg sha256:98349875bf3e09...
+    collector: 'github'             # Collectors used to retrieve attestations
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `policy` | Yes | - | Path to the security policy file to evaluate against |
+| `subject` | Yes | - | Path to a file or hash (algo:value) to use as verification subject |
+| `collector` | Yes | - | Collector to load to read attestations (e.g., 'jsonl', 'github', 'coci', etc) |
+| `attest` | No | `true` | Attest the policy evaluation results |
+| `attest-format` | No | `ampel` | Format of the results attestation |
+| `results-path` | No | `ampel.intoto.json` | Path to store the results attestation |
+| `push-attestation` | No | `false` | Pushes the attestation to the GitHub attestations store |
+| `attestation` | No | `""` | Comma separated list of additional attestations to ingest |
+| `signer` | No | `""` | Comma separated list of expected signer identity slugs |
+| `key` | No | `""` | Path to a key file to use for verification |
+| `keydata` | No | `""` | Raw key material to use for verification |
+| `fail` | No | `true` | Fail the workflow if the policy fails |
+
+#### Examples
+
+**Basic verification:**
+
+```yaml
+- uses: carabiner-dev/actions/ampel/verify@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    policy: '.ampel/policy.yaml'
+    subject: 'path/to/binary'
+    collector: 'github'
+```
+
+**Verification with custom attestations:**
+
+```yaml
+- uses: carabiner-dev/actions/ampel/verify@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    policy: '.ampel/policy.yaml'
+    subject: 'sha256:abc123...'
+    collector: 'oci'
+    attestation: 'sbom.json,provenance.json'
+    signer: 'github-actions,my-org'
+```
+
+**Verification with attestation push:**
+
+```yaml
+- uses: carabiner-dev/actions/ampel/verify@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    policy: '.ampel/policy.yaml'
+    subject: 'path/to/artifact'
+    collector: 'github'
+    attest: 'true'
+    push-attestation: 'true'
+    results-path: 'verification-results.json'
+```
+
+**Verification without failing the workflow:**
+
+```yaml
+- uses: carabiner-dev/actions/ampel/verify@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    policy: '.ampel/policy.yaml'
+    subject: 'path/to/artifact'
+    collector: 'github'
+    fail: 'false'
+```
+
+### sbom/source
+
+The `sbom/source` action generates SBOMs (Software Bill of Materials) for all
+codebases discovered by [unpack](https://github.com/carabiner-dev/unpack) in the
+repository source. It supports SPDX and CycloneDX formats and can filter by
+ecosystem or specific codebase IDs.
+
+> This action used to live at `unpack/sbom`. That path still works but is
+> deprecated and will be removed in a future release.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/sbom/source@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    ecosystems: |
+      golang
+      npm
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `codebases` | No | `""` | Newline-separated list of codebase IDs to generate SBOMs for |
+| `ecosystems` | No | `""` | Newline-separated list of ecosystems to include |
+| `ignore` | No | `""` | Newline-separated list of path patterns to ignore |
+| `files` | No | `false` | Include file information in generated SBOMs |
+| `format` | No | `spdx3` | SBOM format: `spdx` (2.3), `spdx3` (3.0.1) or `cyclonedx` |
+| `attest` | No | `false` | Wrap the generated SBOMs in in-toto attestations |
+| `sign` | No | `false` | Sign the attestations into sigstore bundles (implies `attest`) |
+| `networking` | No | `""` | Network access level for unpack: `essential`, `full` or `disabled` |
+| `output-path` | No | `""` | Directory to write SBOMs to |
+
+Signing requires the job to grant `id-token: write`.
+
+See the [sbom/source README](sbom/source/README.md) for full documentation,
+filename conventions, and more examples.
+
+### sbom/image
+
+The `sbom/image` action generates SBOMs of container images with
+[unpack](https://github.com/carabiner-dev/unpack). It pulls each image, squashes
+its layers and extracts the operating system packages installed in it (apk, dpkg
+and rpm, including distroless images). The resulting SBOMs can be wrapped in
+in-toto attestations and signed with the workflow's own identity.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/sbom/image@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9
+  with:
+    images: ghcr.io/${{ github.repository }}:${{ github.sha }}
+    attest: 'true'
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `images` | Yes | - | Newline-separated list of OCI references to generate SBOMs for |
+| `files` | No | `false` | Include the package file lists in the generated SBOMs |
+| `format` | No | `spdx` | SBOM format: `spdx` or `cyclonedx` |
+| `attest` | No | `false` | Wrap the generated SBOMs in in-toto attestations |
+| `sign` | No | `false` | Sign the attestations into sigstore bundles (implies `attest`) |
+| `output-path` | No | `""` | Directory to write SBOMs to |
+| `push-to-release` | No | `""` | Upload the generated SBOMs to the GitHub release matching this tag |
+| `unpack-version` | No | `""` | Version of unpack to install; must be v0.3.1 or newer |
+
+Signing requires the job to grant `id-token: write`.
+
+See the [sbom/image README](sbom/image/README.md) for full documentation,
+filename conventions, private registry notes, and more examples.
+
+### snappy/snap
+
+The `snappy/snap` action takes an attestable snapshot of an API response with
+[snappy](https://github.com/carabiner-dev/snappy) and signs it into a sigstore
+bundle with bnd, using the workflow's own identity. A snapshot follows a spec
+naming the endpoint to call and the response fields to keep; snappy ships
+built-in specs for GitHub repositories, organizations, branch rules and more.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/snappy/snap@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+  with:
+    spec: builtin:github/branch-rules.yaml
+    vars: |
+      ORG=${{ github.repository_owner }}
+      REPO=${{ github.event.repository.name }}
+      BRANCH=main
+    output: attestations/branch.bundle.json
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `spec` | Yes | - | Spec file path, or a built-in spec such as `builtin:github/repo.yaml` |
+| `vars` | No | `""` | Newline-separated `NAME=value` pairs substituted into the spec |
+| `output` | Yes | - | Path to write the signed bundle (or the unsigned statement) to |
+| `sign` | No | `true` | Sign the statement into a sigstore bundle with the job's identity |
+| `signing-key` | No | `""` | PEM private key to sign with instead; the output is then a DSSE envelope |
+| `platform` | No | `""` | `github` or `gitlab`; auto-detected from the spec when empty |
+| `token` | No | `${{ github.token }}` | Token for the GitHub API calls, exported as `GITHUB_TOKEN` |
+| `snappy-version` | No | `""` | snappy version to install; defaults to the installer's pin |
+| `bnd-version` | No | `""` | bnd version to install; defaults to the installer's pin |
+
+#### Outputs
+
+| Output | Description |
+| --- | --- |
+| `attestation` | Path of the written attestation |
+
+Signing requires the job to grant `id-token: write`, unless a `signing-key`
+is given.
+
+See the [snappy/snap README](snappy/snap/README.md) for the built-in specs,
+permission notes, and more examples.
+
+### bnd/commit
+
+The `bnd/commit` action attests a file to a git commit with
+[bnd](https://github.com/carabiner-dev/bnd): the file becomes the predicate
+of an in-toto statement whose subject is the commit, signed into a sigstore
+bundle with the workflow's own identity. bnd reads the file from the
+repository history as it was at the attested commit, which turns policy files
+a repository already carries (Security Insights, OpenEoX, and the like) into
+verifiable evidence about a specific commit.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/bnd/commit@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+  with:
+    path: SECURITY-INSIGHTS.yml
+    type: https://github.com/ossf/security-insights-spec
+    output: attestations/si.bundle.json
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `path` | One of `path`/`predicate` | `""` | Predicate file inside the repository, read at the attested commit |
+| `predicate` | One of `path`/`predicate` | `""` | Local predicate file, read from disk |
+| `type` | No | `""` | Predicate type URI; bnd autodetects when empty |
+| `yaml` | No | `""` | Convert YAML to JSON: `true`, `false`, or empty to go by extension |
+| `repo` | No | `.` | Repository to attest: the checkout, or a URL bnd clones |
+| `sha` | No | `""` | Commit to attest; defaults to HEAD. Exclusive with `tag` |
+| `tag` | No | `""` | Tag to attest instead of a commit. Exclusive with `sha` |
+| `output` | Yes | - | Path to write the signed bundle to |
+| `signing-key` | No | `""` | PEM private key to sign with instead; the output is then a DSSE envelope |
+| `bnd-version` | No | `""` | bnd version to install; defaults to the installer's pin |
+
+#### Outputs
+
+| Output | Description |
+| --- | --- |
+| `attestation` | Path of the written attestation |
+
+`bnd commit` always signs, so the job must grant `id-token: write` unless a
+`signing-key` is given. Attesting an older `sha` or a `tag` needs the commit
+in the checkout (`fetch-depth: 0`).
+
+See the [bnd/commit README](bnd/commit/README.md) for details on the attested
+commit and more examples.
+
+### bnd/pack
+
+The `bnd/pack` action packs attestation bundles into a single jsonl file with
+[bnd](https://github.com/carabiner-dev/bnd), one attestation per line, ready
+to upload as an artifact, attach to a release or hand to AMPEL through its
+`jsonl:` collector. It packs bundle files and directories, merges existing
+`.jsonl` files line by line, and checks that every line of the result is JSON.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/bnd/pack@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+  with:
+    bundles: attestations/
+    upload-artifact: 'true'
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `bundles` | Yes | - | Newline-separated bundle files, directories (top-level `.json` files) and `.jsonl` files to pack |
+| `output` | No | `attestations.jsonl` | Path of the jsonl file to write |
+| `upload-artifact` | No | `false` | Upload the packed file as a workflow artifact |
+| `artifact-name` | No | `""` | Name of the uploaded artifact; defaults to the output file name |
+| `bnd-version` | No | `""` | bnd version to install; defaults to the installer's pin |
+
+#### Outputs
+
+| Output | Description |
+| --- | --- |
+| `attestations` | Path of the packed jsonl file |
+| `count` | Number of attestations in the packed file |
+
+See the [bnd/pack README](bnd/pack/README.md) for what gets packed and more
+examples.
+
+### vexflow/assemble
+
+The `vexflow/assemble` action assembles the OpenVEX document of a branch with
+[vexflow](https://github.com/carabiner-dev/vexflow) and signs it into a
+sigstore bundle with bnd, using the workflow's own identity. vexflow scans the
+branch, gathers the triaged VEX statements that apply to the vulnerabilities
+it finds, and names the given products, by default the current commit, as
+what the statements are about.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/vexflow/assemble@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+  with:
+    output: attestations/openvex.bundle.json
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `repo` | No | `${{ github.repository }}` | Repository to assemble the document for, as an `org/name` slug |
+| `branch` | No | the default branch | Branch to assemble the document for |
+| `product` | No | `sha1:${{ github.sha }}` | Newline-separated products (hashes or files); the attestation subjects when signing |
+| `triage-repo` | No | `<org>/.vexflow` | Repository holding the triage data |
+| `output` | Yes | - | Path to write the signed bundle (or the bare document) to |
+| `sign` | No | `true` | Wrap the document in an attestation and sign it with the job's identity |
+| `signing-key` | No | `""` | PEM private key to sign with instead; the output is then a DSSE envelope |
+| `token` | No | `${{ github.token }}` | Token vexflow uses to read the triage repository |
+| `vexflow-version` | No | `""` | vexflow version to install; defaults to the installer's pin |
+| `bnd-version` | No | `""` | bnd version to install; defaults to the installer's pin |
+
+#### Outputs
+
+| Output | Description |
+| --- | --- |
+| `attestation` | Path of the written file |
+
+Signing requires the job to grant `id-token: write`, unless a `signing-key`
+is given.
+
+See the [vexflow/assemble README](vexflow/assemble/README.md) for what the
+document contains and more examples.
+
+### drop/install
+
+The `drop/install` action installs an app from its GitHub release with
+[drop](https://github.com/carabiner-dev/drop), verifying the artifact against
+the security policies its publisher defines before it lands in the runner.
+Policies are evaluated with AMPEL against the attestations shipped with the
+release; without a policy that applies, nothing is installed.
+
+#### Usage
+
+```yaml
+- uses: carabiner-dev/actions/drop/install@32587e82f960d49b36101e8c45d1956e511965d3 # v1.2.9 # pin to a release commit once tagged
+  with:
+    app: sigstore/cosign
+    version: v3.1.3
+```
+
+#### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `app` | Yes | - | App to install: `org/repo`, `github.com/org/repo`, or `org/repo#toolname` when the binary is not named after the repository |
+| `version` | No | `""` | Release tag to install; the latest stable release when empty |
+| `policy-repo` | No | `""` | Alternative policy source: a GitHub repository (URL or slug) or a local checkout path |
+| `insecure` | No | `false` | Skip verification and install the artifact as published |
+| `type` | No | `""` | Artifact type when the release offers several: `binary`, `package` or `archive` |
+| `install-dir` | No | `$HOME/.carabiner` | Directory to install into; binaries go to its `bin/` subdirectory, which is on the `PATH` |
+| `drop-version` | No | `""` | drop version to install; defaults to the installer's pin |
+
+See the [drop/install README](drop/install/README.md) for where policies come
+from and more examples.
+
+### Go Actions
+
+| Action | Description |
+| --- | --- |
+| `go/versions` | Resolves the project, latest stable, and previous supported Go versions |
+| `go/check-latest` | Checks that `go.mod` references the latest stable Go release |
+| `go/check-previous` | Checks that `go.mod` references the previous supported Go release |
+
+See the [go/ README](go/README.md) for full documentation and examples.
+
+### Available Installers
+
+| Action | Description |
+| --- | --- |
+| `install/ampel` | Installs the 🔴🟡🟢 AMPEL policy engine into the runner environment |
+| `install/bnd` | Installs the Carabiner bnd attestation utility into the runner environment |
+| `install/drop` | Installs drop, the Carabiner secure-first installer for GitHub releases, into the runner environment |
+| `install/beaker` | Installs the Carabiner beaker test attester into the runner environment |
+| `install/snappy` | Installs the Carabiner snappy API snapshotter into the runner environment |
+| `install/revex` | Installs the OpenVEX revex document fixer into the runner |
+| `install/unpack` | Installs the Carabiner unpack dependency analyzer to the runner environment |
+| `install/vexflow` | Installs the vexflow VEX lifecycle manager into the runner environment |
+
+## Privacy
+
+This Action contacts Chainguard's licensing server to verify authorization. Connection metadata (IP address, GitHub repository identifier, timestamp, and any metadata encoded in the auth token) is transmitted to Chainguard, Inc. even if authorization is denied in accordance with our [Privacy Notice](https://www.chainguard.dev/legal/privacy-notice)

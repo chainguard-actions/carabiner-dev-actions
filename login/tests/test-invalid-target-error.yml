@@ -1,0 +1,55 @@
+name: Test invalid_target resource error handling
+# Tests that the action fails gracefully when the token exchange server
+# returns an invalid_target error (resource not in the Carabiner organization).
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up mock curl returning invalid_target error
+        run: |
+          FAKE_OIDC_JWT="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3Qvd29ya2Zsb3cifQ.fakesignature"
+          printf '{"value": "%s"}\n' "${FAKE_OIDC_JWT}" > /tmp/fake-oidc-response.json
+
+          # Exchange server returns 400 with invalid_target error
+          printf '{"error": "invalid_target", "error_description": "Resource not found in organization"}\n' \
+            > /tmp/fake-exchange-error.json
+
+          # Use the fixture fake curl; it checks for /tmp/fake-exchange-error.json
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-curl.sh" /tmp/fake-curl-it
+          chmod +x /tmp/fake-curl-it
+          mkdir -p /tmp/fake-bin-it
+          cp /tmp/fake-curl-it /tmp/fake-bin-it/curl
+          echo "/tmp/fake-bin-it" >> "$GITHUB_PATH"
+
+      - id: login
+        uses: .
+        continue-on-error: true
+        with:
+          exchange-url: "https://auth.carabiner.dev"
+          audience: "https://api.carabiner.dev"
+          scope: "attestations:read attestations:write"
+          # Request a resource that doesn't belong to the organization
+          resource: "repository://github/some-other-org/some-repo"
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: "http://localhost:9999/oidc/token_request"
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-runner-token"
+          FAKE_EXCHANGE_HTTP_CODE: "400"
+
+      - name: Assert action failed on invalid_target error
+        env:
+          OUTCOME: ${{ steps.login.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action correctly failed when exchange server returned invalid_target"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action should have failed when exchange server returned invalid_target"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

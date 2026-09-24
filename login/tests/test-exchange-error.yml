@@ -1,0 +1,53 @@
+name: Test exchange server error handling
+# Tests that the action fails gracefully when the token exchange server
+# returns an error response (e.g. HTTP 403 with invalid_scope error).
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up mock curl returning exchange error
+        run: |
+          FAKE_OIDC_JWT="eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3Qvd29ya2Zsb3cifQ.fakesignature"
+          printf '{"value": "%s"}\n' "${FAKE_OIDC_JWT}" > /tmp/fake-oidc-response.json
+
+          # Exchange server returns 403 with invalid_scope error
+          printf '{"error": "invalid_scope", "error_description": "None of the requested scopes are granted"}\n' \
+            > /tmp/fake-exchange-error.json
+
+          # Use the fixture fake curl; it checks for /tmp/fake-exchange-error.json
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-curl.sh" /tmp/fake-curl-err
+          chmod +x /tmp/fake-curl-err
+          mkdir -p /tmp/fake-bin-err
+          cp /tmp/fake-curl-err /tmp/fake-bin-err/curl
+          echo "/tmp/fake-bin-err" >> "$GITHUB_PATH"
+
+      - id: login
+        uses: .
+        continue-on-error: true
+        with:
+          exchange-url: "https://auth.carabiner.dev"
+          audience: "https://api.carabiner.dev"
+          scope: "attestations:read attestations:write"
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: "http://localhost:9999/oidc/token_request"
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-runner-token"
+          FAKE_EXCHANGE_HTTP_CODE: "403"
+
+      - name: Assert action failed on exchange error
+        env:
+          OUTCOME: ${{ steps.login.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action correctly failed when exchange server returned an error"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action should have failed when exchange server returned 403"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
