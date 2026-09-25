@@ -1,0 +1,206 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'Assemble VEX Document'
+author: "carabiner-dev"
+description: 'Assembles the OpenVEX document of a branch with vexflow and signs it with bnd'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  repo:
+    description: 'Repository whose branch to assemble the VEX document for, as an org/name slug.'
+    required: false
+    default: ${{ github.repository }}
+  branch:
+    description: >
+      Branch to assemble the document for. Defaults to the repository's default
+      branch, or to main when the event carries no repository information.
+    required: false
+    default: ${{ github.event.repository.default_branch }}
+  product:
+    description: >
+      Newline-separated products the statements apply to, as hashes
+      (algo:value, e.g. sha1:<commit>) or paths to files. When signing they
+      are also the subjects of the attestation. Defaults to the commit the
+      workflow runs for.
+    required: false
+    default: sha1:${{ github.sha }}
+  triage-repo:
+    description: >
+      Repository holding the triage data, as an org/name slug. Defaults to the
+      .vexflow repository of the organization that owns repo.
+    required: false
+    default: ''
+  output:
+    description: >
+      Path to write the result to: a signed sigstore bundle or, when sign is
+      false, the bare OpenVEX document. Parent directories are created as
+      needed.
+    required: true
+  sign:
+    description: >
+      Wrap the document in an in-toto attestation with the products as subjects
+      and sign it with the job's workload identity. Requires the job to grant
+      the `id-token: write` permission unless a signing-key is given.
+    required: false
+    default: 'true'
+  signing-key:
+    description: >
+      Path to a private key (PEM: PKCS#8, PKCS#1 or SEC1) to sign with instead
+      of the job's workload identity. The output is then a DSSE envelope rather
+      than a sigstore bundle, and `id-token: write` is not needed.
+    required: false
+    default: ''
+  token:
+    description: 'Token vexflow uses to read the triage repository, exported as GITHUB_TOKEN.'
+    required: false
+    default: ${{ github.token }}
+  vexflow-version:
+    description: 'vexflow version to install. Defaults to the version shipped by the vexflow installer.'
+    required: false
+    default: ''
+  bnd-version:
+    description: 'bnd version to install for signing. Defaults to the version shipped by the bnd installer.'
+    required: false
+    default: ''
+
+outputs:
+  attestation:
+    description: >
+      Path of the written file, as given in the output input. Empty when
+      vexflow found no packages to scan and no document was written.
+    value: ${{ steps.assemble.outputs.attestation }}
+
+runs:
+  using: composite
+  steps:
+    # When a version is set, pass it through; otherwise install with no version
+    # so the installer applies its own default and the pinned tool versions
+    # stay in one place.
+    - if: ${{ inputs.vexflow-version == '' }}
+      name: vexflow Setup
+      uses: $/install/vexflow
+    - if: ${{ inputs.vexflow-version != '' }}
+      name: vexflow Setup (pinned)
+      uses: $/install/vexflow
+      with:
+        version: ${{ inputs.vexflow-version }}
+
+    - if: ${{ inputs.sign == 'true' && inputs.bnd-version == '' }}
+      name: bnd Setup
+      uses: $/install/bnd
+    - if: ${{ inputs.sign == 'true' && inputs.bnd-version != '' }}
+      name: bnd Setup (pinned)
+      uses: $/install/bnd
+      with:
+        version: ${{ inputs.bnd-version }}
+
+    - id: assemble
+      name: Assemble VEX document
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        INPUTS_REPO: ${{ inputs.repo }}
+        INPUTS_BRANCH: ${{ inputs.branch }}
+        INPUTS_PRODUCT: ${{ inputs.product }}
+        INPUTS_TRIAGE_REPO: ${{ inputs.triage-repo }}
+        INPUTS_OUTPUT: ${{ inputs.output }}
+        INPUTS_SIGN: ${{ inputs.sign }}
+        INPUTS_SIGNING_KEY: ${{ inputs.signing-key }}
+      run: |
+        set -euo pipefail
+
+        # Without a signing key, signing uses the job's workload identity,
+        # which is only available when the workflow grants id-token: write.
+        # Fail early with a useful message.
+        if [ "${INPUTS_SIGN}" = "true" ] && [ -z "${INPUTS_SIGNING_KEY}" ] && [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::error::Signing requires the job to grant the 'id-token: write' permission."
+          exit 1
+        fi
+
+        if [ -z "${INPUTS_REPO}" ]; then
+          echo "::error::repo must not be empty"
+          exit 1
+        fi
+
+        args=(assemble --repo "${INPUTS_REPO}")
+
+        # Leave the flag out when unset so vexflow's own default applies.
+        if [ -n "${INPUTS_BRANCH}" ]; then
+          args+=(--branch "${INPUTS_BRANCH}")
+        fi
+
+        if [ -n "${INPUTS_TRIAGE_REPO}" ]; then
+          args+=(--triage-repo "${INPUTS_TRIAGE_REPO}")
+        fi
+
+        # One --product per non-empty line; the same values become the
+        # attestation subjects when signing. Trim with parameter expansion
+        # rather than xargs so unusual path characters survive intact.
+        subjects=()
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [ -z "${line}" ] && continue
+          args+=(--product "${line}")
+          subjects+=(--subject "${line}")
+        done <<< "${INPUTS_PRODUCT}"
+
+        if [ "${INPUTS_SIGN}" = "true" ] && [ "${#subjects[@]}" -eq 0 ]; then
+          echo "::error::at least one product is required to sign the document, it becomes the attestation subject"
+          exit 1
+        fi
+
+        # vexflow writes the document to stdout (releases up to v0.0.1-pre3
+        # ignore --out) and its progress log to stderr, so capture stdout into
+        # a temporary file. Working in a temporary directory also means a
+        # failed run never leaves a partial file at the output path.
+        TMP_DIR="$(mktemp -d)"
+        trap 'rm -rf "${TMP_DIR}"' EXIT
+        DOC="${TMP_DIR}/openvex.json"
+
+        # vexflow logs to stderr; keep a copy to tell "nothing to scan" apart
+        # from real failures.
+        LOG="${TMP_DIR}/vexflow.log"
+        echo "::group::vexflow ${args[*]}"
+        rc=0
+        vexflow "${args[@]}" > "${DOC}" 2> "${LOG}" || rc=$?
+        cat "${LOG}" >&2
+        echo "::endgroup::"
+
+        # A branch without dependency manifests vexflow can scan has no VEX
+        # document to assemble. vexflow reports that as a fatal error, but
+        # for the caller it means there is no attestation to produce: say so
+        # and finish without writing anything.
+        if [ "${rc}" -ne 0 ] && grep -q "no packages found in scan" "${LOG}"; then
+          echo "::warning::vexflow found no packages to scan in ${INPUTS_REPO}${INPUTS_BRANCH:+@${INPUTS_BRANCH}}, no VEX document to attest"
+          echo "attestation=" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        if [ "${rc}" -ne 0 ]; then
+          exit "${rc}"
+        fi
+
+        if [ ! -s "${DOC}" ]; then
+          echo "::error::vexflow produced no document"
+          exit 1
+        fi
+
+        mkdir -p "$(dirname "${INPUTS_OUTPUT}")"
+
+        if [ "${INPUTS_SIGN}" = "true" ]; then
+          sign=(predicate --type "https://openvex.dev/ns/v0.2.0" "${subjects[@]}" --out "${INPUTS_OUTPUT}")
+          # A private key switches bnd to its key backend, which writes a
+          # DSSE envelope instead of a sigstore bundle.
+          if [ -n "${INPUTS_SIGNING_KEY}" ]; then
+            sign+=(--signing-key "${INPUTS_SIGNING_KEY}")
+          fi
+          bnd "${sign[@]}" "${DOC}"
+        else
+          mv "${DOC}" "${INPUTS_OUTPUT}"
+        fi
+
+        echo "attestation=${INPUTS_OUTPUT}" >> "${GITHUB_OUTPUT}"

@@ -1,0 +1,236 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'SLSA Provenance Generator'
+author: "carabiner-dev"
+description: 'Observes a workflow run and generates a signed SLSA provenance attestation using tejolote'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  sign:
+    description: "Sign the attestation using the job's workload identity (Sigstore)"
+    required: false
+    default: "true"
+  slsa-version:
+    description: "SLSA predicate version to generate (1.0 or 0.2)"
+    required: false
+    default: "1.0"
+  output:
+    description: "Path to write the provenance attestation"
+    required: false
+    default: "provenance.intoto.jsonl"
+  watch-jobs:
+    description: >-
+      Comma-separated list of job names to watch. If empty and the action
+      detects it is running inside the same workflow run being attested,
+      it will automatically watch all sibling jobs.
+    required: false
+    default: ""
+  artifacts:
+    description: >-
+      Comma-separated list of artifact storage URIs to collect from
+      (e.g. 'oci://registry/image,gs://bucket/path'). When empty, the run's
+      GitHub Actions artifacts are collected automatically. When set, tejolote
+      collects only from these URIs and does not collect the run's native
+      GitHub Actions artifacts.
+    required: false
+    default: ""
+  expand-artifacts:
+    description: >-
+      When true (default), unpack archive-wrapped GitHub Actions artifacts and
+      record one subject per contained file. When false, attest each archive as
+      a single subject.
+    required: false
+    default: "true"
+  artifacts-filter:
+    description: >-
+      Glob (path.Match syntax) matched against artifact names; when set, only
+      matching artifacts are attested. Applies to all artifact sources.
+    required: false
+    default: ""
+  dependencies:
+    description: >-
+      Comma-separated list of dependency URIs to record in the provenance
+      (e.g. 'git+https://github.com/org/repo@sha,image@sha256:digest')
+    required: false
+    default: ""
+  timeout:
+    description: "Max time to wait for the watched build jobs to complete (Go duration, e.g. 20m). 0 disables the timeout."
+    required: false
+    default: "20m"
+  tejolote-version:
+    description: "Released tejolote version to download and run"
+    required: false
+    default: "v0.5.0"
+  verify:
+    description: >-
+      Verify the downloaded tejolote binary with ampel against its signed
+      SLSA provenance attestation before use.
+    required: false
+    default: "true"
+  policy:
+    description: >-
+      Ampel policy locator (path, URL, or VCS locator) applied when verifying
+      the tejolote download.
+    required: false
+    default: "git+https://github.com/carabiner-dev/policies@eed2d09ac2a7f8f5238a24b30492e378d8d77ad3#slsa/slsa-build-point.json"
+  build-point:
+    description: >-
+      Expected source build point (VCS URI) that the default policy checks
+      against the tejolote provenance.
+    required: false
+    default: "git+ssh://github.com/kubernetes-sigs/tejolote"
+
+outputs:
+  attestation:
+    description: "Path to the generated provenance attestation file"
+    value: ${{ steps.attest.outputs.attestation }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install tejolote
+      id: install-tejolote
+      shell: bash
+      env:
+        INPUTS_TEJOLOTE_VERSION: ${{ inputs.tejolote-version }}
+        INPUTS_VERIFY: ${{ inputs.verify }}
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}" in
+          Linux)   os="linux" ;;
+          macOS)   os="darwin" ;;
+          Windows) os="windows" ;;
+          *) echo "::error::Unsupported OS: ${RUNNER_OS}"; exit 1 ;;
+        esac
+
+        case "${RUNNER_ARCH}" in
+          X64)   arch="amd64" ;;
+          ARM64) arch="arm64" ;;
+          *) echo "::error::Unsupported architecture: ${RUNNER_ARCH}"; exit 1 ;;
+        esac
+
+        ext=""
+        if [ "${os}" = "windows" ]; then
+          ext=".exe"
+        fi
+
+        VERSION="${INPUTS_TEJOLOTE_VERSION}"
+        BASE="https://github.com/kubernetes-sigs/tejolote/releases/download/${VERSION}"
+        DIR="$(mktemp -d)"
+        BIN="${DIR}/tejolote${ext}"
+
+        echo "Downloading tejolote ${VERSION} (${os}/${arch})"
+        curl -sSfL --retry 3 --retry-all-errors --retry-delay 2 \
+          -o "${BIN}" "${BASE}/tejolote-${arch}-${os}${ext}"
+        chmod 0755 "${BIN}"
+        echo "bin=${BIN}" >> "${GITHUB_OUTPUT}"
+
+        # When verifying, fetch the signed SLSA provenance into its own directory
+        # so the ampel filesystem collector can read it as an attestation source.
+        if [ "${INPUTS_VERIFY}" = "true" ]; then
+          ATT_DIR="${DIR}/attestations"
+          mkdir -p "${ATT_DIR}"
+          curl -sSfL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "${ATT_DIR}/tejolote-${VERSION}.provenance.json" \
+            "${BASE}/tejolote-${VERSION}.provenance.json"
+          echo "attest-dir=${ATT_DIR}" >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Verify tejolote provenance
+      if: inputs.verify == 'true'
+      uses: $/ampel/verify
+      with:
+        subject: ${{ steps.install-tejolote.outputs.bin }}
+        collector: "fs:${{ steps.install-tejolote.outputs.attest-dir }}"
+        policy: ${{ inputs.policy }}
+        signer: "sigstore::https://token.actions.githubusercontent.com::https://github.com/kubernetes-sigs/tejolote/.github/workflows/release.yml@refs/tags/${{ inputs.tejolote-version }}"
+        context: "buildPoint:${{ inputs.build-point }}"
+        attest: "false"
+
+    - name: Generate provenance attestation
+      id: attest
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        STEPS_INSTALL_TEJOLOTE_OUTPUTS_BIN: ${{ steps.install-tejolote.outputs.bin }}
+        INPUTS_OUTPUT: ${{ inputs.output }}
+        INPUTS_SLSA_VERSION: ${{ inputs.slsa-version }}
+        INPUTS_SIGN: ${{ inputs.sign }}
+        INPUTS_WATCH_JOBS: ${{ inputs.watch-jobs }}
+        INPUTS_ARTIFACTS: ${{ inputs.artifacts }}
+        INPUTS_DEPENDENCIES: ${{ inputs.dependencies }}
+        INPUTS_TIMEOUT: ${{ inputs.timeout }}
+        INPUTS_EXPAND_ARTIFACTS: ${{ inputs.expand-artifacts }}
+        INPUTS_ARTIFACTS_FILTER: ${{ inputs.artifacts-filter }}
+      run: |
+        set -euo pipefail
+
+        TEJOLOTE="${STEPS_INSTALL_TEJOLOTE_OUTPUTS_BIN}"
+        SPEC_URL="github://${{ github.repository }}/${{ github.run_id }}"
+        OUTPUT="${INPUTS_OUTPUT}"
+
+        ARGS=(
+          "$SPEC_URL"
+          --slsa="${INPUTS_SLSA_VERSION}"
+          --output="$OUTPUT"
+        )
+
+        # Signing
+        if [[ "${INPUTS_SIGN}" == "true" ]]; then
+          ARGS+=(--sign)
+        fi
+
+        # Watch specific jobs if specified
+        if [[ -n "${INPUTS_WATCH_JOBS}" ]]; then
+          ARGS+=(--watch-jobs="${INPUTS_WATCH_JOBS}")
+        fi
+
+        # Watch timeout
+        if [[ -n "${INPUTS_TIMEOUT}" ]]; then
+          ARGS+=(--watch-timeout="${INPUTS_TIMEOUT}")
+        fi
+
+        # Artifact expansion (GitHub Actions archives)
+        if [[ -n "${INPUTS_EXPAND_ARTIFACTS}" ]]; then
+          ARGS+=(--expand-artifacts="${INPUTS_EXPAND_ARTIFACTS}")
+        fi
+
+        # Artifact name filter
+        if [[ -n "${INPUTS_ARTIFACTS_FILTER}" ]]; then
+          ARGS+=(--artifacts-filter="${INPUTS_ARTIFACTS_FILTER}")
+        fi
+
+        # Additional artifact sources
+        if [[ -n "${INPUTS_ARTIFACTS}" ]]; then
+          IFS=',' read -ra ARTIFACT_URIS <<< "${INPUTS_ARTIFACTS}"
+          for uri in "${ARTIFACT_URIS[@]}"; do
+            uri=$(echo "$uri" | xargs)  # trim whitespace
+            if [[ -n "$uri" ]]; then
+              ARGS+=(--artifacts="$uri")
+            fi
+          done
+        fi
+
+        # Additional dependencies
+        if [[ -n "${INPUTS_DEPENDENCIES}" ]]; then
+          IFS=',' read -ra DEP_URIS <<< "${INPUTS_DEPENDENCIES}"
+          for uri in "${DEP_URIS[@]}"; do
+            uri=$(echo "$uri" | xargs)
+            if [[ -n "$uri" ]]; then
+              ARGS+=(--dependency="$uri")
+            fi
+          done
+        fi
+
+        echo "::group::Running tejolote attest"
+        echo "tejolote attest ${ARGS[*]}"
+        "$TEJOLOTE" attest "${ARGS[@]}"
+        echo "::endgroup::"
+
+        echo "attestation=$OUTPUT" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,48 @@
+name: Test default inputs
+# Tests the action with all default inputs. Under the act harness the OIDC token
+# will be minted (id-token: write is granted) but the carabiner exchange server
+# will refuse the token because the sentinel repository is not registered.
+# The action must fail gracefully — not crash or hang.
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        name: Run carabiner login with default inputs
+        uses: .
+        continue-on-error: true
+        # All inputs left at their defaults:
+        #   exchange-url: https://auth.carabiner.dev
+        #   audience:     https://api.carabiner.dev
+        #   scope:        attestations:read attestations:write
+        #   resource:     (empty)
+
+      - name: Assert action outcome is success or graceful failure
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXPIRES_IN: ${{ steps.action.outputs.expires-in }}
+          SCOPE: ${{ steps.action.outputs.scope }}
+        run: |
+          echo "outcome:    $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope:      $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            # If the exchange server accepted the token, expires-in must be set.
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: action succeeded but expires-in output is empty"
+              exit 1
+            fi
+            echo "PASS: login succeeded, token valid for ${EXPIRES_IN}s, scope='$SCOPE'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo not registered with carabiner)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

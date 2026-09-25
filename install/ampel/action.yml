@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: setup ampel
+author: carabiner-dev
+description: "Installs the \U0001F534\U0001F7E1\U0001F7E2 AMPEL policy engine into to the runner environment"
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+inputs:
+  install-dir:
+    description: 'Path to install the binary'
+    required: false
+    default: '$HOME/.carabiner'
+  version:
+    description: 'AMPEL Version to Install'
+    required: false
+    default: 'v1.3.10'
+runs:
+  using: "composite"
+  steps:
+    - uses: $/install/download-and-verify
+      with:
+        tool: ampel
+        version: ${{ inputs.version }}
+        install-dir: ${{ inputs.install-dir }}
+        attestation-file: ampel-${{ inputs.version }}.provenance.json

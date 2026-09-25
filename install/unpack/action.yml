@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: setup unpack
+author: carabiner-dev
+description: 'Installs the Carabiner unpack dependency analyzer to the runner environment'
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+inputs:
+  install-dir:
+    description: 'Path to install the binary'
+    required: false
+    default: '$HOME/.carabiner'
+  version:
+    description: 'Unpack version to install'
+    required: false
+    default: 'v0.3.2'
+runs:
+  using: "composite"
+  steps:
+    - uses: $/install/download-and-verify
+      with:
+        tool: unpack
+        version: ${{ inputs.version }}
+        install-dir: ${{ inputs.install-dir }}
+        attestation-file: unpack-${{ inputs.version }}.provenance.json
