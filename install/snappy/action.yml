@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: setup snappy
+author: carabiner-dev
+description: 'Installs the Carabiner snappy API snapshotter into the runner environment'
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+inputs:
+  install-dir:
+    description: 'Path to install the binary'
+    required: false
+    default: '$HOME/.carabiner'
+  version:
+    description: 'snappy version to install'
+    required: false
+    default: 'v0.2.6'
+runs:
+  using: "composite"
+  steps:
+    - uses: carabiner-dev/actions/install/download-and-verify@d6d91c5c88723021a8798392cb9780c89ff6fdad # v1.2.7
+      with:
+        tool: snappy
+        version: ${{ inputs.version }}
+        install-dir: ${{ inputs.install-dir }}
+        attestation-file: snappy-${{ inputs.version }}.provenance.json

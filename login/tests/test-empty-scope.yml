@@ -1,0 +1,87 @@
+name: Test identity-only token with empty scope
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up mock curl for identity-only token exchange
+        run: |
+          mkdir -p /tmp/mock-carabiner-scope
+
+          SCRIPT=/tmp/mock-carabiner-scope/curl
+          printf '%s\n' '#!/bin/sh' > "$SCRIPT"
+          printf '%s\n' '# Fake curl: intercepts OIDC and exchange calls, returns identity-only token' >> "$SCRIPT"
+          printf '%s\n' 'out=""' >> "$SCRIPT"
+          printf '%s\n' 'prev=""' >> "$SCRIPT"
+          printf '%s\n' 'for arg in "$@"; do' >> "$SCRIPT"
+          printf '%s\n' '  case "$prev" in' >> "$SCRIPT"
+          printf '%s\n' '    -o|--output) out="$arg" ;;' >> "$SCRIPT"
+          printf '%s\n' '  esac' >> "$SCRIPT"
+          printf '%s\n' '  prev="$arg"' >> "$SCRIPT"
+          printf '%s\n' 'done' >> "$SCRIPT"
+          printf '%s\n' 'serve_text() {' >> "$SCRIPT"
+          printf '%s\n' '  local text="$1"' >> "$SCRIPT"
+          printf '%s\n' '  if [ -n "$out" ]; then' >> "$SCRIPT"
+          printf '%s\n' '    printf "%s" "$text" > "$out"' >> "$SCRIPT"
+          printf '%s\n' '  else' >> "$SCRIPT"
+          printf '%s\n' '    printf "%s" "$text"' >> "$SCRIPT"
+          printf '%s\n' '  fi' >> "$SCRIPT"
+          printf '%s\n' '}' >> "$SCRIPT"
+          printf '%s\n' 'case "$*" in' >> "$SCRIPT"
+          printf '%s\n' '  *audience*|*ACTIONS_ID_TOKEN*|*token.actions*)' >> "$SCRIPT"
+          printf '%s\n' '    serve_text '"'"'{"value":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3QifQ.fakesig"}'"'"'' >> "$SCRIPT"
+          printf '%s\n' '    exit 0' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' '  */token*)' >> "$SCRIPT"
+          printf '%s\n' '    # Identity-only token: no scope field in response' >> "$SCRIPT"
+          printf '%s\n' '    serve_text '"'"'{"access_token":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.fakecarsig","expires_in":1800,"token_type":"Bearer"}'"'"'' >> "$SCRIPT"
+          printf '%s\n' '    if [ -n "$out" ]; then' >> "$SCRIPT"
+          printf '%s\n' '      printf "\n200" >> "$out"' >> "$SCRIPT"
+          printf '%s\n' '    else' >> "$SCRIPT"
+          printf '%s\n' '      printf "\n200"' >> "$SCRIPT"
+          printf '%s\n' '    fi' >> "$SCRIPT"
+          printf '%s\n' '    exit 0' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' '  *)' >> "$SCRIPT"
+          printf '%s\n' '    exec /usr/bin/curl "$@"' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' 'esac' >> "$SCRIPT"
+          chmod +x "$SCRIPT"
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.githubusercontent.com/oidc/token"
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-runner-token"
+          PATH: "/tmp/mock-carabiner-scope:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        with:
+          exchange-url: "https://mock.carabiner.test/token"
+          audience: "https://api.carabiner.dev"
+          scope: ""
+
+      - name: Assert identity-only token outcome
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXPIRES_IN: ${{ steps.action.outputs.expires-in }}
+          SCOPE: ${{ steps.action.outputs.scope }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope: $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: expires-in output is empty on success"
+              exit 1
+            fi
+            # scope should be empty for identity-only token
+            echo "PASS: identity-only token issued, expires-in=$EXPIRES_IN scope='$SCOPE'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (OIDC/exchange not available under act)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

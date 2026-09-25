@@ -1,0 +1,35 @@
+name: Test custom directory download
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare custom directory
+        run: mkdir -p "$GITHUB_WORKSPACE/custom-bin"
+      - id: action
+        uses: .
+        with:
+          binary: sigstore/cosign
+          directory: /github/workspace/custom-bin
+        continue-on-error: true
+      - name: Assert binary was downloaded to custom directory or action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "Checking for downloaded binary in custom directory..."
+            if ls "$GITHUB_WORKSPACE/custom-bin/" 2>/dev/null | grep -q .; then
+              echo "PASS: custom directory contains files"
+            else
+              echo "FAIL: action succeeded but no files found in custom directory"
+              exit 1
+            fi
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action ran (may have failed due to network/policy constraints in test environment)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

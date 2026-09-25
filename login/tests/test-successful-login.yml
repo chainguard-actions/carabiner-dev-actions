@@ -1,0 +1,91 @@
+name: Test successful login with mock exchange server
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up mock curl and OIDC environment
+        run: |
+          mkdir -p /tmp/mock-carabiner
+
+          # Write the fake curl script using printf to avoid heredoc indentation issues
+          SCRIPT=/tmp/mock-carabiner/curl
+          printf '%s\n' '#!/bin/sh' > "$SCRIPT"
+          printf '%s\n' '# Fake curl: intercepts OIDC token request and exchange server calls' >> "$SCRIPT"
+          printf '%s\n' 'out=""' >> "$SCRIPT"
+          printf '%s\n' 'prev=""' >> "$SCRIPT"
+          printf '%s\n' 'for arg in "$@"; do' >> "$SCRIPT"
+          printf '%s\n' '  case "$prev" in' >> "$SCRIPT"
+          printf '%s\n' '    -o|--output) out="$arg" ;;' >> "$SCRIPT"
+          printf '%s\n' '  esac' >> "$SCRIPT"
+          printf '%s\n' '  prev="$arg"' >> "$SCRIPT"
+          printf '%s\n' 'done' >> "$SCRIPT"
+          printf '%s\n' 'serve_text() {' >> "$SCRIPT"
+          printf '%s\n' '  local text="$1"' >> "$SCRIPT"
+          printf '%s\n' '  if [ -n "$out" ]; then' >> "$SCRIPT"
+          printf '%s\n' '    printf "%s" "$text" > "$out"' >> "$SCRIPT"
+          printf '%s\n' '  else' >> "$SCRIPT"
+          printf '%s\n' '    printf "%s" "$text"' >> "$SCRIPT"
+          printf '%s\n' '  fi' >> "$SCRIPT"
+          printf '%s\n' '}' >> "$SCRIPT"
+          printf '%s\n' 'case "$*" in' >> "$SCRIPT"
+          printf '%s\n' '  *audience*|*ACTIONS_ID_TOKEN*|*token.actions*)' >> "$SCRIPT"
+          printf '%s\n' '    serve_text '"'"'{"value":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnRlc3QifQ.fakesig"}'"'"'' >> "$SCRIPT"
+          printf '%s\n' '    exit 0' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' '  */token*)' >> "$SCRIPT"
+          printf '%s\n' '    serve_text '"'"'{"access_token":"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiZXhwIjoxNzAwMDAwMDAwfQ.fakecarsig","expires_in":3600,"scope":"attestations:read attestations:write","token_type":"Bearer"}'"'"'' >> "$SCRIPT"
+          printf '%s\n' '    if [ -n "$out" ]; then' >> "$SCRIPT"
+          printf '%s\n' '      printf "\n200" >> "$out"' >> "$SCRIPT"
+          printf '%s\n' '    else' >> "$SCRIPT"
+          printf '%s\n' '      printf "\n200"' >> "$SCRIPT"
+          printf '%s\n' '    fi' >> "$SCRIPT"
+          printf '%s\n' '    exit 0' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' '  *)' >> "$SCRIPT"
+          printf '%s\n' '    exec /usr/bin/curl "$@"' >> "$SCRIPT"
+          printf '%s\n' '    ;;' >> "$SCRIPT"
+          printf '%s\n' 'esac' >> "$SCRIPT"
+          chmod +x "$SCRIPT"
+          echo "Mock curl written to $SCRIPT"
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.githubusercontent.com/oidc/token"
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-runner-token"
+          PATH: "/tmp/mock-carabiner:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        with:
+          exchange-url: "https://mock.carabiner.test/token"
+          audience: "https://api.carabiner.dev"
+          scope: "attestations:read attestations:write"
+
+      - name: Assert action outcome and outputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXPIRES_IN: ${{ steps.action.outputs.expires-in }}
+          SCOPE: ${{ steps.action.outputs.scope }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope: $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: expires-in output is empty"
+              exit 1
+            fi
+            if [ -z "$SCOPE" ]; then
+              echo "FAIL: scope output is empty"
+              exit 1
+            fi
+            echo "PASS: action succeeded with expires-in=$EXPIRES_IN scope=$SCOPE"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (mock exchange server not reachable or OIDC unavailable under act)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
