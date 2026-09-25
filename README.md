@@ -9,7 +9,8 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
 | sha-d41fe10fe88deaf493ce026007da73738b9f570c | [`sha-d41fe10fe88deaf493ce026007da73738b9f570c`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/sha-d41fe10fe88deaf493ce026007da73738b9f570c) | — |
-| v1.2.9 | [`v1.2.9`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.9) | [`32587e8`](https://github.com/carabiner-dev/actions/commit/32587e82f960d49b36101e8c45d1956e511965d3) |
+| v1.2.9 | [`v1.2.9`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.9) | — |
+| v1.3.0 | [`v1.3.0`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.3.0) | [`d41fe10`](https://github.com/carabiner-dev/actions/commit/d41fe10fe88deaf493ce026007da73738b9f570c) |
 
 ## Privacy
 
