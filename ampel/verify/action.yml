@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: Copyright 2025 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'Verify Policy'
+author: "carabiner-dev"
+description: 'Verifies a subject against a policy'
+branding:
+  icon: 'award'
+  color: 'green'
+inputs:
+  policy:
+    description: Don't attempt to find and apply security policies
+    required: true
+  subject:
+    description: 'Path to a file or hash (algo:value) to use as verification subject'
+    required: true
+  collector:
+    description: 'Collector to load to read attestations'
+    required: true
+  attest:
+    description: 'Attest the policy evaluation results'
+    required: false
+    default: "true"
+  attest-format:
+    description: 'Format of the results attestation'
+    required: false
+    default: "ampel"
+  results-path:
+    description: "Path to store the results attestation"
+    required: false
+    default: "ampel.intoto.json"
+  push-attestation:
+    description: 'Pushes the attestation to the GitHub attestations store'
+    required: false
+    default: "false"
+  attestation:
+    description: 'Comma separated list of attestations to ingest'
+    required: false
+    default: ""
+  signer:
+    description: 'Comma separated list of signer identity slugs'
+    required: false
+    default: ""
+  key:
+    description: 'Path to a key file to use for verification'
+    required: false
+    default: ""
+  keydata:
+    description: 'Raw key material to use for verification'
+    required: false
+    default: ""
+  context:
+    description: 'Contextual values to pass to the policy (e.g. "key=value,key2=value2")'
+    required: false
+    default: ""
+  fail:
+    description: 'Fail the workflow if the policy fails'
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: carabiner-dev/actions/install/ampel@2a11d59a135c5e291f305f249a92ad7903e3ee0f # v1.1.7
+      name: 🔴🟡🟢 AMPEL Setup
+      id: install
+
+    - id: attest-check
+      shell: bash
+      run: |
+        ATTEST="${{ inputs.attest }}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "::notice::Attestation disabled: no token available for workflow_dispatch events"
+          ATTEST="false"
+        fi
+        echo "attest=${ATTEST}" >> "$GITHUB_OUTPUT"
+
+    - id: verify
+      shell: bash
+      run: |
+        KEY_FLAGS=""
+        CONTEXT_FLAGS=""
+
+        if [ -n "${{ inputs.context }}" ]; then
+          CONTEXT_FLAGS="--context \"${{ inputs.context }}\""
+        fi
+
+        if [ -n "${{ inputs.key }}" ]; then
+          KEY_FLAGS="--key=${{ inputs.key }}"
+        fi
+
+        if [ -n "${{ inputs.keydata }}" ]; then
+          KEYDATA_FILE=$(mktemp)
+          printf '%s\n' '${{ inputs.keydata }}' > "${KEYDATA_FILE}"
+          KEY_FLAGS="${KEY_FLAGS} --key=${KEYDATA_FILE}"
+        fi
+
+        ampel verify \
+          --subject="${{ inputs.subject }}" \
+          --collector="${{ inputs.collector }}" \
+          --policy="${{ inputs.policy }}" \
+          --exit-code="${{ inputs.fail }}" \
+          --attest-results="${{ steps.attest-check.outputs.attest }}" \
+          --attest-format="${{ inputs.attest-format }}" \
+          --results-path="${{ inputs.results-path }}" \
+          --attestation="${{ inputs.attestation }}" \
+          --signer="${{ inputs.signer }}" \
+          ${KEY_FLAGS} \
+          ${CONTEXT_FLAGS} \
+          --format="html" >> $GITHUB_STEP_SUMMARY
+
+        if [ -n "${KEYDATA_FILE:-}" ]; then
+          rm -f "${KEYDATA_FILE}"
+        fi
+
+    - if: ${{ steps.attest-check.outputs.attest == 'true' }}
+      name: Setup bnd
+      uses: carabiner-dev/actions/install/bnd@2a11d59a135c5e291f305f249a92ad7903e3ee0f # v1.1.7
+
+    - if: ${{ steps.attest-check.outputs.attest == 'true' }}
+      name: sign-ampel-results
+      shell: bash
+      run: |
+        mv ${{ inputs.results-path }} ${{ inputs.results-path }}.tmp
+        bnd statement ${{ inputs.results-path }}.tmp >> ${{ inputs.results-path }}
+
+    - if: ${{ steps.attest-check.outputs.attest == 'true' && inputs.push-attestation == 'true' }}
+      name: Push attestation to artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ampel.intoto.json
+        path: ${{ inputs.results-path }}

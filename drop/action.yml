@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright 2025 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Drop binaries to runner'
+description: 'Download binaries securely into the runner'
+inputs:
+  insecure:
+    description: Don't attempt to find and apply security policies
+    required: false
+    default: 'false'
+  binary:
+    description: 'Binary spec to download (eg sigstore/cosign)'
+    required: true
+  directory:
+    description: 'Directory to download the binaries'
+    default: '$HOME/.carabiner'
+runs:
+  using: 'docker'
+  image: 'docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f'
+  args:
+    - get
+    - --insecure=${{ inputs.insecure }}
+    - --directory=${{ inputs.directory }}
+    - ${{ inputs.binary }}
