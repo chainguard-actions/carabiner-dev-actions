@@ -1,0 +1,215 @@
+# SPDX-FileCopyrightText: Copyright 2025 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+---
+# Optional --key/--context flags are built as bash arrays for safe quoting.
+name: 'Verify Policy'
+author: "carabiner-dev"
+description: 'Verifies a subject against a policy'
+branding:
+  icon: 'award'
+  color: 'green'
+inputs:
+  policy:
+    description: Don't attempt to find and apply security policies
+    required: true
+  subject:
+    description: 'Path to a file or hash (algo:value) to use as verification subject'
+    required: true
+  collector:
+    description: 'Collector to load to read attestations'
+    required: true
+  attest:
+    description: 'Attest the policy evaluation results'
+    required: false
+    default: "true"
+  attest-format:
+    description: 'Format of the results attestation'
+    required: false
+    default: "ampel"
+  results-path:
+    description: "Path to store the results attestation"
+    required: false
+    default: "ampel.intoto.json"
+  push-attestation:
+    description: 'Pushes the attestation to the GitHub attestations store'
+    required: false
+    default: "false"
+  attestation:
+    description: 'Comma separated list of attestations to ingest'
+    required: false
+    default: ""
+  signer:
+    description: 'Comma separated list of signer identity slugs'
+    required: false
+    default: ""
+  key:
+    description: 'Path to a key file to use for verification'
+    required: false
+    default: ""
+  keydata:
+    description: 'Raw key material to use for verification'
+    required: false
+    default: ""
+  context:
+    description: 'Contextual values to pass to the policy (e.g. "key=value,key2=value2")'
+    required: false
+    default: ""
+  results:
+    description: >
+      What to write to the workflow step summary: "report" renders the full
+      evaluation results table, "summary" writes a single traffic-light line
+      and "none" writes nothing to the summary while printing the full
+      results to the step log. The summary line requires ampel v1.3.5 or
+      newer; with older versions the action falls back to the full report.
+    required: false
+    default: "report"
+  fail:
+    description: 'Fail the workflow if the policy fails'
+    required: false
+    default: "true"
+  ampel-version:
+    description: 'AMPEL version to install and run the verification with. Defaults to the version shipped by the ampel installer. Signing the results attestation (attest: true) requires v1.3.3 or later.'
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    # When ampel-version is set, pass it through; otherwise install with no
+    # version so install/ampel applies its own default. This keeps the AMPEL
+    # version in a single place (install/ampel's version input default, which
+    # the automation bump workflow maintains) instead of duplicating it here.
+    - if: ${{ inputs.ampel-version == '' }}
+      name: 🔴🟡🟢 AMPEL Setup
+      uses: carabiner-dev/actions/install/ampel@2fec8bd8e1dcfdea26080648070b4827f1fa0584
+    - if: ${{ inputs.ampel-version != '' }}
+      name: 🔴🟡🟢 AMPEL Setup (pinned)
+      uses: carabiner-dev/actions/install/ampel@2fec8bd8e1dcfdea26080648070b4827f1fa0584
+      with:
+        version: ${{ inputs.ampel-version }}
+
+    - id: attest-check
+      shell: bash
+      run: |
+        ATTEST="${INPUTS_ATTEST}"
+        if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+          echo "::notice::Attestation disabled: no token available for workflow_dispatch events"
+          ATTEST="false"
+        fi
+        echo "attest=${ATTEST}" >> "$GITHUB_OUTPUT"
+      env:
+        INPUTS_ATTEST: ${{ inputs.attest }}
+
+    - id: verify
+      shell: bash
+      run: |
+        key_flags=()
+        ctx_flags=()
+        sign_flags=()
+
+        case "${INPUTS_RESULTS}" in
+          report|summary|none) ;;
+          *)
+            echo "::error::results must be one of: report, summary, none; got: ${INPUTS_RESULTS}"
+            exit 1
+            ;;
+        esac
+
+        # The summary driver shipped in ampel v1.3.5. To guard against
+        # older releases, fall back to the full report when the installed
+        # ampel does not have it.
+        RESULTS_MODE="${INPUTS_RESULTS}"
+        if [ "${RESULTS_MODE}" = "summary" ]; then
+          AMPEL_VERSION="$(ampel version 2>/dev/null | sed -n 's/^GitVersion:[[:space:]]*//p' || true)"
+          case "${AMPEL_VERSION}" in
+            v[0-9]*)
+              if [ "$(printf 'v1.3.5\n%s\n' "${AMPEL_VERSION}" | sort -V | head -n1)" != "v1.3.5" ]; then
+                echo "::notice::ampel ${AMPEL_VERSION} predates the summary output driver (v1.3.5), writing the full report instead"
+                RESULTS_MODE="report"
+              fi
+              ;;
+            *)
+              echo "::notice::cannot determine the ampel version, writing the full report instead of the summary"
+              RESULTS_MODE="report"
+              ;;
+          esac
+        fi
+
+        if [ -n "${INPUTS_CONTEXT}" ]; then
+          ctx_flags=(--context "${INPUTS_CONTEXT}")
+        fi
+
+        # When attesting, have ampel sign the results attestation itself.
+        # The default sigstore backend picks up the workflow identity token.
+        if [ "${STEPS_ATTEST_CHECK_OUTPUTS_ATTEST}" = "true" ]; then
+          sign_flags+=(--sign)
+        fi
+
+        if [ -n "${INPUTS_KEY}" ]; then
+          key_flags+=(--key="${INPUTS_KEY}")
+        fi
+
+        if [ -n "${INPUTS_KEYDATA}" ]; then
+          KEYDATA_FILE=$(mktemp)
+          printf '%s\n' "${INPUTS_KEYDATA}" > "${KEYDATA_FILE}"
+          key_flags+=(--key="${KEYDATA_FILE}")
+        fi
+
+        args=(verify
+          --subject="${INPUTS_SUBJECT}"
+          --collector="${INPUTS_COLLECTOR}"
+          --policy="${INPUTS_POLICY}"
+          --exit-code="${INPUTS_FAIL}"
+          --attest-results="${STEPS_ATTEST_CHECK_OUTPUTS_ATTEST}"
+          --attest-format="${INPUTS_ATTEST_FORMAT}"
+          --results-path="${INPUTS_RESULTS_PATH}"
+          --attestation="${INPUTS_ATTESTATION}"
+          --signer="${INPUTS_SIGNER}"
+          "${key_flags[@]}"
+          "${ctx_flags[@]}"
+          "${sign_flags[@]}"
+        )
+
+        rc=0
+        case "${RESULTS_MODE}" in
+          report)
+            ampel "${args[@]}" --format="html" >> "$GITHUB_STEP_SUMMARY" || rc=$?
+            ;;
+          summary)
+            line="$(ampel "${args[@]}" --format="summary")" || rc=$?
+            if [ -n "${line}" ]; then
+              echo "${line}"
+              echo "${line}" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            ;;
+          none)
+            # The full results go to the step log only
+            ampel "${args[@]}" --format="tty" || rc=$?
+            ;;
+        esac
+
+        if [ -n "${KEYDATA_FILE:-}" ]; then
+          rm -f "${KEYDATA_FILE}"
+        fi
+
+        exit "${rc}"
+      env:
+        INPUTS_CONTEXT: ${{ inputs.context }}
+        INPUTS_KEY: ${{ inputs.key }}
+        INPUTS_KEYDATA: ${{ inputs.keydata }}
+        INPUTS_SUBJECT: ${{ inputs.subject }}
+        INPUTS_COLLECTOR: ${{ inputs.collector }}
+        INPUTS_POLICY: ${{ inputs.policy }}
+        INPUTS_FAIL: ${{ inputs.fail }}
+        INPUTS_RESULTS: ${{ inputs.results }}
+        STEPS_ATTEST_CHECK_OUTPUTS_ATTEST: ${{ steps.attest-check.outputs.attest }}
+        INPUTS_ATTEST_FORMAT: ${{ inputs.attest-format }}
+        INPUTS_RESULTS_PATH: ${{ inputs.results-path }}
+        INPUTS_ATTESTATION: ${{ inputs.attestation }}
+        INPUTS_SIGNER: ${{ inputs.signer }}
+
+    - if: ${{ steps.attest-check.outputs.attest == 'true' && inputs.push-attestation == 'true' }}
+      name: Push attestation to artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ampel.intoto.json
+        path: ${{ inputs.results-path }}

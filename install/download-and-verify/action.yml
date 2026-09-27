@@ -1,0 +1,205 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: Download and verify Carabiner binary
+author: carabiner-dev
+description: >
+  Downloads a Carabiner binary from GitHub releases and optionally verifies
+  it using a bootstrapped ampel trust anchor against SLSA provenance.
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+inputs:
+  tool:
+    description: 'Name of the binary to install'
+    required: true
+  version:
+    description: 'Release tag to download (e.g. v1.0.0)'
+    required: true
+  install-dir:
+    description: 'Path to install the binary'
+    required: false
+    default: '$HOME/.carabiner'
+  repo:
+    description: 'GitHub repository under carabiner-dev (defaults to tool name)'
+    required: false
+    default: ''
+  verify:
+    description: 'Verify the binary with ampel against SLSA provenance'
+    required: false
+    default: 'true'
+  attestation-file:
+    description: 'Name of the attestation file in the release'
+    required: false
+    default: 'attestations.jsonl'
+  policy:
+    description: >
+      Ampel policy locator (VCS locator or path) used by `ampel verify`.
+      Defaults to a pinned revision of the carabiner-dev policies repo's
+      slsa-build-point policy.
+    required: false
+    default: 'git+https://github.com/carabiner-dev/policies@eed2d09ac2a7f8f5238a24b30492e378d8d77ad3#slsa/slsa-build-point.json'
+  context:
+    description: >
+      Newline-separated context values passed to `ampel verify` as `-x KEY:VALUE`.
+      When empty, the action injects `buildPoint:git+ssh://github.com/carabiner-dev/<repo>`
+      derived from the download location, matching the URI scheme used in the
+      `resolvedDependencies` of carabiner-dev SLSA provenances.
+    required: false
+    default: ''
+  signers:
+    description: >
+      Newline-separated signer identity specs passed to `ampel verify` as `--signer SPEC`.
+      When empty, the action injects a sigstore regexp spec pinned to the
+      `<repo>/.github/workflows/release.yaml` workflow under carabiner-dev,
+      with the tag left as a regex wildcard.
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+      - name: Validate install-dir
+        id: install-dir
+        shell: bash
+        run: |
+          case "$INPUTS_INSTALL_DIR" in
+            ''|*[!A-Za-z0-9._/\$~-]*)
+              echo "::error::install-dir must be non-empty and contain only [A-Za-z0-9._/\$~-]; got: $INPUTS_INSTALL_DIR"
+              exit 1
+              ;;
+          esac
+          # The value arrives through env, so the shell never expands a $HOME
+          # or ~ prefix. So we resolve the path here and use it downstream.
+          case "$INPUTS_INSTALL_DIR" in
+            '$HOME'|'$HOME'/*) dir="${HOME}${INPUTS_INSTALL_DIR#\$HOME}" ;;
+            '~'|'~'/*)         dir="${HOME}${INPUTS_INSTALL_DIR#\~}" ;;
+            *)                 dir="$INPUTS_INSTALL_DIR" ;;
+          esac
+          echo "path=$dir" >> "$GITHUB_OUTPUT"
+        env:
+          INPUTS_INSTALL_DIR: ${{ inputs.install-dir }}
+
+      - name: Bootstrap trusted ampel
+        if: inputs.verify == 'true'
+        uses: carabiner-dev/actions/install/ampel-bootstrap@2fec8bd8e1dcfdea26080648070b4827f1fa0584
+        id: bootstrap
+
+      - name: Detect platform
+        id: platform
+        shell: bash
+        run: |
+          OS="${{ runner.os }}"
+          ARCH="${{ runner.arch }}"
+
+          case "$OS" in
+            Linux)  os="linux" ;;
+            macOS)  os="darwin" ;;
+            Windows) os="windows" ;;
+            *) echo "::error::Unsupported OS: $OS"; exit 1 ;;
+          esac
+
+          case "$ARCH" in
+            X64)   arch="amd64" ;;
+            ARM64) arch="arm64" ;;
+            *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+
+          ext=""
+          if [ "$os" = "windows" ]; then
+            ext=".exe"
+          fi
+
+          REPO="${INPUTS_REPO}"
+          if [ -z "$REPO" ]; then
+            REPO="${INPUTS_TOOL}"
+          fi
+
+          echo "filename=${INPUTS_TOOL}-${INPUTS_VERSION}-${os}-${arch}${ext}" >> "$GITHUB_OUTPUT"
+          echo "ext=${ext}" >> "$GITHUB_OUTPUT"
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUTS_REPO: ${{ inputs.repo }}
+          INPUTS_TOOL: ${{ inputs.tool }}
+          INPUTS_VERSION: ${{ inputs.version }}
+
+      - name: Install ${{ inputs.tool }}
+        shell: bash
+        run: |
+          mkdir -p "${INSTALL_DIR}/bin" || :
+          curl -sSfL --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "${INSTALL_DIR}/bin/${INPUTS_TOOL}${STEPS_PLATFORM_OUTPUTS_EXT}" \
+            "https://github.com/carabiner-dev/${STEPS_PLATFORM_OUTPUTS_REPO}/releases/download/${INPUTS_VERSION}/${STEPS_PLATFORM_OUTPUTS_FILENAME}"
+          chmod 0755 "${INSTALL_DIR}/bin/${INPUTS_TOOL}${STEPS_PLATFORM_OUTPUTS_EXT}"
+        env:
+          INSTALL_DIR: ${{ steps.install-dir.outputs.path }}
+          INPUTS_TOOL: ${{ inputs.tool }}
+          STEPS_PLATFORM_OUTPUTS_EXT: ${{ steps.platform.outputs.ext }}
+          STEPS_PLATFORM_OUTPUTS_REPO: ${{ steps.platform.outputs.repo }}
+          INPUTS_VERSION: ${{ inputs.version }}
+          STEPS_PLATFORM_OUTPUTS_FILENAME: ${{ steps.platform.outputs.filename }}
+
+      - name: Verify ${{ inputs.tool }} binary
+        if: inputs.verify == 'true'
+        shell: bash
+        env:
+          CONTEXT_INPUT: ${{ inputs.context }}
+          SIGNERS_INPUT: ${{ inputs.signers }}
+          DEFAULT_BUILD_POINT: git+ssh://github.com/carabiner-dev/${{ steps.platform.outputs.repo }}
+          DEFAULT_SIGNER: 'sigstore(regexp)::https://token\.actions\.githubusercontent\.com::https://github\.com/carabiner-dev/${{ steps.platform.outputs.repo }}/\.github/workflows/release\.yaml@refs/tags/[^/]+'
+          INPUTS_TOOL: ${{ inputs.tool }}
+          INPUTS_VERSION: ${{ inputs.version }}
+          INSTALL_DIR: ${{ steps.install-dir.outputs.path }}
+          STEPS_PLATFORM_OUTPUTS_EXT: ${{ steps.platform.outputs.ext }}
+          STEPS_PLATFORM_OUTPUTS_REPO: ${{ steps.platform.outputs.repo }}
+          INPUTS_ATTESTATION_FILE: ${{ inputs.attestation-file }}
+          INPUTS_POLICY: ${{ inputs.policy }}
+          STEPS_BOOTSTRAP_OUTPUTS_AMPEL_PATH: ${{ steps.bootstrap.outputs.ampel-path }}
+        run: |
+          echo "::group::Verify ${INPUTS_TOOL} ${INPUTS_VERSION}"
+
+          args=(verify)
+          args+=(--subject="${INSTALL_DIR}/bin/${INPUTS_TOOL}${STEPS_PLATFORM_OUTPUTS_EXT}")
+          args+=(--collector="https://github.com/carabiner-dev/${STEPS_PLATFORM_OUTPUTS_REPO}/releases/download/${INPUTS_VERSION}/${INPUTS_ATTESTATION_FILE}")
+          args+=(--policy="${INPUTS_POLICY}")
+
+          if [ -n "$CONTEXT_INPUT" ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              args+=(-x "$line")
+            done <<< "$CONTEXT_INPUT"
+          else
+            args+=(-x "buildPoint:$DEFAULT_BUILD_POINT")
+          fi
+
+          if [ -n "$SIGNERS_INPUT" ]; then
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              args+=(--signer "$line")
+            done <<< "$SIGNERS_INPUT"
+          else
+            args+=(--signer "$DEFAULT_SIGNER")
+          fi
+
+          "${STEPS_BOOTSTRAP_OUTPUTS_AMPEL_PATH}" "${args[@]}"
+          echo "::endgroup::"
+
+      - if: ${{ runner.os == 'Linux' || runner.os == 'macOS' }}
+        run: echo "${INSTALL_DIR}/bin" >> $GITHUB_PATH # zizmor: ignore[github-env] install-dir validated upstream
+        shell: bash
+        env:
+          INSTALL_DIR: ${{ steps.install-dir.outputs.path }}
+      - if: ${{ runner.os == 'Windows' }}
+        # Resolve $HOME/~ with pwsh's own $HOME so PATH gets a Windows-style path.
+        run: | # zizmor: ignore[github-env] install-dir validated upstream
+          $dir = $env:INPUTS_INSTALL_DIR
+          if ($dir -eq '$HOME' -or $dir.StartsWith('$HOME/')) { $dir = $HOME + $dir.Substring(5) }
+          elseif ($dir -eq '~' -or $dir.StartsWith('~/')) { $dir = $HOME + $dir.Substring(1) }
+          echo "$dir/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+        env:
+          INPUTS_INSTALL_DIR: ${{ inputs.install-dir }}
+
+      - shell: bash
+        run: ${INPUTS_TOOL} version
+        env:
+          INPUTS_TOOL: ${{ inputs.tool }}
