@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright 2025 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'Run Tests'
+author: "carabiner-dev"
+description: 'Runs tests and attests the results'
+branding:
+  icon: 'award'
+  color: 'green'
+  
+inputs:
+  dir:
+    description: 'Directory to run the test suite'
+    required: false
+    default: "."
+  output:
+    description: "Path to write the tests attestation"
+    required: false
+    default: "tests.intoto.json"
+  sign:
+    description: "Sign the resulting attestation with the job's workload identity"
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: carabiner-dev/actions/install/beaker@881902808dc7d4c0072f28fc7555e982f2413c20
+      name: Beaker Setup
+      id: install
+
+    - uses: carabiner-dev/actions/install/bnd@881902808dc7d4c0072f28fc7555e982f2413c20
+      name: bnd Setup
+      id: install-bnd
+
+    - id: run-and-attest
+      shell: bash
+      run: |
+        beaker run \
+          --dir="${{ inputs.dir }}" \
+          --output="${{ inputs.output }}.tmp"
+
+    - if: ${{ inputs.sign == 'true' }}
+      id: "sign-attestation"
+      shell: bash
+      run: |
+        bnd statement --out="${{ inputs.output }}" "${{ inputs.output }}.tmp"
+        rm "${{ inputs.output }}.tmp"
+
+    - if: ${{ inputs.sign != 'true' }}
+      id: "set-attestation-name"
+      shell: bash
+      run: |
+        mv "${{ inputs.output }}.tmp" "${{ inputs.output }}"
