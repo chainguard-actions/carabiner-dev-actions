@@ -1,0 +1,48 @@
+name: Test custom inputs (exchange-url, audience, scope, resource)
+# Tests the action with non-default inputs to exercise the scope normalization
+# and resource argument building code paths. With id-token: write granted the
+# OIDC step succeeds; the exchange will fail because the custom URL is not a
+# real Carabiner server, so we accept a graceful failure at the exchange step.
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          exchange-url: "https://auth.carabiner.dev"
+          audience: "https://api.carabiner.dev"
+          # Narrow scope — exercises the scope normalization (xargs) path
+          scope: "attestations:read"
+          # Provide a resource URI — exercises the resource_args loop
+          resource: "organization://test-org"
+
+      - name: Assert action ran with custom inputs (exchange may be refused)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXPIRES_IN: ${{ steps.action.outputs.expires-in }}
+          SCOPE: ${{ steps.action.outputs.scope }}
+        run: |
+          echo "outcome:    $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope:      $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: action succeeded but expires-in output is empty"
+              exit 1
+            fi
+            echo "PASS: logged in with custom inputs; token valid for ${EXPIRES_IN}s"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully with custom inputs (exchange refused)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

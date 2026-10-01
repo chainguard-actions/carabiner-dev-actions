@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright 2026 Carabiner Systems, Inc
+# SPDX-License-Identifier: Apache-2.0
+
+name: setup beaker
+author: carabiner-dev
+description: 'Installs the Carabiner beaker test attester into the runner environment'
+branding:
+  icon: 'download-cloud'
+  color: 'green'
+inputs:
+  install-dir:
+    description: 'Path to install the binary'
+    required: false
+    default: '$HOME/.carabiner'
+  version:
+    description: 'beaker version to install'
+    required: false
+    default: 'v0.1.2'
+runs:
+  using: "composite"
+  steps:
+    - if: ${{ runner.os == 'Windows' }}
+      shell: bash
+      run: |
+        echo "::error::beaker does not have a Windows binary"
+        exit 1
+    - uses: carabiner-dev/actions/install/download-and-verify@619a474b2178d06ccf274349397cd67a7802a4fe
+      with:
+        tool: beaker
+        version: ${{ inputs.version }}
+        install-dir: ${{ inputs.install-dir }}
