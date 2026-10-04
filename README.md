@@ -12,8 +12,8 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v1.1.6 | [`v1.1.6`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.1.6) | — |
 | v1.2.0 | [`v1.2.0`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.0) | — |
 | v1.2.1 | [`v1.2.1`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.1) | — |
-| v1.2.3 | [`v1.2.3`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.3) | — |
-| v1.2.6 | [`v1.2.6`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.6) | [`36a39ef`](https://github.com/carabiner-dev/actions/commit/36a39ef667efe7112df8b1a534a4e37f35fad6fd) |
+| v1.2.3 | [`v1.2.3`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.3) | [`2a4b2cd`](https://github.com/carabiner-dev/actions/commit/2a4b2cd115ede14629b03ef7e77586d3269d4c72) |
+| v1.2.6 | [`v1.2.6`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.6) | — |
 | v1.2.9 | [`v1.2.9`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.9) | — |
 | v1.3.0 | [`v1.3.0`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.3.0) | — |
 
