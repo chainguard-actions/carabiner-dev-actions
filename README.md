@@ -8,8 +8,8 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
-| sha-d41fe10fe88deaf493ce026007da73738b9f570c | [`sha-d41fe10fe88deaf493ce026007da73738b9f570c`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/sha-d41fe10fe88deaf493ce026007da73738b9f570c) | — |
-| v1.1.6 | [`v1.1.6`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.1.6) | [`360ffa1`](https://github.com/carabiner-dev/actions/commit/360ffa1eb909b0105d4eccb6d6ef337911c34952) |
+| sha-d41fe10fe88deaf493ce026007da73738b9f570c | [`sha-d41fe10fe88deaf493ce026007da73738b9f570c`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/sha-d41fe10fe88deaf493ce026007da73738b9f570c) | [`d41fe10`](https://github.com/carabiner-dev/actions/commit/d41fe10fe88deaf493ce026007da73738b9f570c) |
+| v1.1.6 | [`v1.1.6`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.1.6) | — |
 | v1.2.0 | [`v1.2.0`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.0) | — |
 | v1.2.1 | [`v1.2.1`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.1) | — |
 | v1.2.3 | [`v1.2.3`](https://github.com/chainguard-actions/carabiner-dev-actions/tree/v1.2.3) | — |
