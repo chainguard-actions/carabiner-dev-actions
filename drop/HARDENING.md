@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-The Docker image in action.yml is not pinned to a SHA digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. It has no tag, so it resolves to the mutable `latest` tag. Pin it with @sha256:<digest> to prevent supply-chain attacks.
+The Docker action's image isn't pinned to a digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. It has no tag either, so it resolves to the mutable `latest` tag, and whoever controls that tag controls what runs. Pin it as ghcr.io/carabiner-dev/drop@sha256:<digest>.
 
 Locations:
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned runs.image in action.yml to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. There is no v1.2.0 image tag in the registry, so this pins the current latest. The Docker args are unchanged.
+Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. I left the Docker args unchanged: the runner passes them to the container as a list with no shell in between, so the expressions in them can't inject commands.
 
