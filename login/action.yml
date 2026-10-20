@@ -73,11 +73,11 @@ runs:
         # stamp its default (the repository's whole organization).
         requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
-        res_list=()
+        resources=()
         if [ -n "${requested_resources}" ]; then
-          read -r -d '' -a res_list <<< "${requested_resources}" || true
+          read -r -d '' -a resources <<< "${requested_resources}" || true
         fi
-        for res in ${res_list[@]+"${res_list[@]}"}; do
+        for res in ${resources[@]+"${resources[@]}"}; do
           resource_args+=(--data-urlencode "resource=${res}")
         done
         response="$(curl -sS -w '\n%{http_code}' \
