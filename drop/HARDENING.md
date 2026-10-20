@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-The Docker action's `runs.image` references `docker://ghcr.io/carabiner-dev/drop` without a tag or SHA digest (implicitly uses `latest`). This is a mutable image reference — a supply-chain attacker could push a malicious image to that registry path and it would be pulled automatically. The image must be pinned to an immutable SHA digest, e.g. `image: ghcr.io/carabiner-dev/drop@sha256:<64-hex-char-digest>`.
+runs.image in action.yml points to a mutable container image with no tag and no SHA digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. With no tag it resolves to `latest`. If that image changes upstream, every run of the action will use the new image. Pin it to a digest, for example `docker://ghcr.io/carabiner-dev/drop@sha256:<digest>`.
 
 Locations:
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned the Docker image reference in action.yml from `docker://ghcr.io/carabiner-dev/drop` (implicit latest, mutable) to `docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f` (immutable digest). The `docker://` scheme and `:latest` tag are preserved inline as required.
+Pinned runs.image in action.yml to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f, keeping the docker:// scheme. The Docker args are unchanged because they are passed as an argv array and are not injectable.
 
