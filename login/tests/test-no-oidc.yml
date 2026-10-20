@@ -1,0 +1,28 @@
+name: Test no OIDC token available
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Intentionally do NOT grant id-token: write so OIDC vars are absent
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: login
+        uses: .
+        continue-on-error: true
+        env:
+          # Explicitly clear OIDC env vars to simulate no OIDC available
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+
+      - name: Assert action failed due to missing OIDC
+        env:
+          OUTCOME: ${{ steps.login.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail when OIDC is not available, got '$OUTCOME'"
+            exit 1
+          fi
+          echo "PASS: action correctly failed when OIDC token is not available"

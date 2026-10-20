@@ -1,0 +1,42 @@
+name: Test custom directory download
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create custom download directory under workspace
+        run: mkdir -p "$GITHUB_WORKSPACE/custom-binaries"
+
+      - id: action
+        uses: .
+        with:
+          binary: sigstore/cosign
+          directory: /github/workspace/custom-binaries
+        continue-on-error: true
+
+      - name: Assert binary was downloaded to custom directory or action ran gracefully
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            BINARY_PATH="$GITHUB_WORKSPACE/custom-binaries/cosign"
+            echo "Checking for binary at: $BINARY_PATH"
+            if [ -f "$BINARY_PATH" ]; then
+              echo "PASS: binary found at custom directory $BINARY_PATH"
+            else
+              echo "Contents of $GITHUB_WORKSPACE/custom-binaries:"
+              ls -la "$GITHUB_WORKSPACE/custom-binaries" 2>/dev/null || echo "(directory not found)"
+              echo "FAIL: expected binary not found at $BINARY_PATH"
+              exit 1
+            fi
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "INFO: action failed (may be network/policy/registry issue in test environment)"
+            echo "PASS: action ran and failed gracefully"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

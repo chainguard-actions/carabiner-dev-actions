@@ -74,9 +74,11 @@ runs:
         requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
         if [ -n "${requested_resources}" ]; then
-          while IFS= read -r -d '' res; do
+          resource_list=()
+          read -r -d '' -a resource_list <<< "${requested_resources}" || true
+          for res in "${resource_list[@]}"; do
             resource_args+=(--data-urlencode "resource=${res}")
-          done < <(printf '%s' "${requested_resources}" | xargs printf '%s\0')
+          done
         fi
         response="$(curl -sS -w '\n%{http_code}' \
           -X POST "${INPUTS_EXCHANGE_URL%/}/token" \
@@ -136,8 +138,10 @@ runs:
         # 3. Mask the carabiner token and publish it to subsequent steps.
         echo "::add-mask::${token}"
         printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
-        echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"
-        echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"
+        safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
+        safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
+        echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
+        echo "scope=${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
         echo "::notice::Logged in to carabiner; token valid for ${expires_in:-unknown}s"
       env:
         INPUTS_EXCHANGE_URL: ${{ inputs.exchange-url }}

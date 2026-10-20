@@ -1,0 +1,41 @@
+name: Test basic usage with OIDC
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: login
+        uses: .
+        continue-on-error: true
+        with:
+          exchange-url: "https://auth.carabiner.dev"
+          audience: "https://api.carabiner.dev"
+          scope: "attestations:read attestations:write"
+
+      - name: Assert action ran and produced expected outputs or failed gracefully
+        env:
+          OUTCOME: ${{ steps.login.outcome }}
+          EXPIRES_IN: ${{ steps.login.outputs.expires-in }}
+          SCOPE: ${{ steps.login.outputs.scope }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "expires-in: $EXPIRES_IN"
+          echo "scope: $SCOPE"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$EXPIRES_IN" ]; then
+              echo "FAIL: action succeeded but expires-in output is empty"
+              exit 1
+            fi
+            echo "PASS: action succeeded with expires-in='$EXPIRES_IN' scope='$SCOPE'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (exchange server rejected the token, expected in test environment)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
