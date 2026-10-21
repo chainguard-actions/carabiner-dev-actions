@@ -73,11 +73,11 @@ runs:
         # stamp its default (the repository's whole organization).
         requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
-        res_list=()
+        resources=()
         if [ -n "${requested_resources}" ]; then
-          read -r -d '' -a res_list <<< "${requested_resources}" || true
+          read -r -d '' -a resources <<< "${requested_resources}" || true
         fi
-        for res in ${res_list[@]+"${res_list[@]}"}; do
+        for res in ${resources[@]+"${resources[@]}"}; do
           resource_args+=(--data-urlencode "resource=${res}")
         done
         response="$(curl -sS -w '\n%{http_code}' \
@@ -135,10 +135,9 @@ runs:
           echo "::warning::Carabiner narrowed the requested scopes: requested '${requested_scope}', granted '${granted_scope}'"
         fi
 
-        # 3. Mask the token and export it for later steps.
+        # 3. Mask the carabiner token and publish it to subsequent steps.
         echo "::add-mask::${token}"
-        safe_token="$(printf '%s' "${token}" | tr -d '\n\r')"
-        printf 'CARABINER_CREDENTIALS=%s\n' "${safe_token}" >> "${GITHUB_ENV}"
+        printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
         safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
         echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
