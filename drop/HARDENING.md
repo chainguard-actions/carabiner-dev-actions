@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-runs.image in action.yml is set to 'docker://ghcr.io/carabiner-dev/drop'. It has no SHA digest and no tag, so it resolves to the mutable 'latest' tag. Whoever controls that tag controls what runs, which makes this a supply-chain risk. Pin the image to a digest, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest>.
+The Docker action's runs.image points to a mutable image with no digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. With no tag given, it resolves to `:latest`. It should be pinned to a SHA digest, e.g. `docker://ghcr.io/carabiner-dev/drop@sha256:<digest> # tag`.
 
 Locations:
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned runs.image in action.yml to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. The digest was looked up from the registry, and the docker:// scheme and the tag are kept in the reference. The 'latest' tag only labels the digest now. It is not used to pick the image. Docker args were left unchanged.
+Pinned runs.image in action.yml to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f, the digest :latest pointed to when I looked it up. There is no v1.2.0 image tag (lookup returned 404), so the pin is to what :latest is now, not to a release-matched build. Docker args left unchanged, since they are passed as an argv array and nothing in them can be injected.
 
