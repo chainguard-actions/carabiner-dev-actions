@@ -14,38 +14,38 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ## Findings Fixed
 
-### github-env-injection (severity: high)
-
-Step 'login' writes `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"` without first running printf '%s' ... | tr -d '\n\r'. Both values come from the JSON response of the server at inputs.exchange-url, which the caller controls. `jq -r` can return strings with newlines, so a hostile or misconfigured exchange server could add extra output lines. Unlike CARABINER_CREDENTIALS, which is checked against a JWT regex, these two values are written without any newline stripping.
-
-Locations:
-
-- `action.yml:163`
-- `action.yml:164`
-
 ### script-injection (severity: high)
 
-Rule (b): the value from `requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"` (from inputs.resource) is expanded without quotes in `for res in ${requested_resources}; do`. The shell therefore applies glob expansion to the input as well as splitting it into words. To split safely, use `read -ra resources <<< "$requested_resources"` and loop over "${resources[@]}", or turn globbing off with `set -f`.
+Sub-rule (b), an unquoted expansion of untrusted data. `requested_resources` comes from inputs.resource (env INPUTS_RESOURCE, normalized with xargs) and is expanded without quotes in `for res in ${requested_resources}; do`. The shell therefore splits the value on whitespace and also expands glob characters (*, ?, [...]) from the caller's input against the filesystem. Fix: split into an array without globbing, e.g. `read -r -a resources <<< "$requested_resources"` and then `for res in "${resources[@]}"`.
 
 Locations:
 
-- `action.yml:88`
+- `action.yml:76`
+
+### github-env-injection (severity: high)
+
+The login step writes `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values are taken with `jq -r` from the HTTP response of the token exchange server, and that server's address is the caller-controlled input `exchange-url`. They are not literals computed in the script, and nothing removes newlines before the write. A response with newlines in .scope or .expires_in could inject extra step outputs. Add the required sanitization first, e.g. `safe_scope=$(printf '%s' "$granted_scope" | tr -d '\n\r')` and `safe_expires=$(printf '%s' "$expires_in" | tr -d '\n\r')`, and write those values instead.
+
+Locations:
+
+- `action.yml:137`
+- `action.yml:138`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** github-env-injection, script-injection
+**Fixes applied:** script-injection, github-env-injection
 
 **Notes:**
 
-Both fixes are in action.yml. 1) Before writing to GITHUB_OUTPUT, expires_in and granted_scope now go through printf '%s' | tr -d '\n\r'. A value with a newline can no longer add extra output lines. 2) The requested resources are now read into an array with `read -r -d '' -a` (guarded for an empty value, with || true) and looped as "${resources[@]}". This splits on whitespace the same way the old unquoted loop did, but without glob expansion. Nothing was run or tested. Neither change was exercised against a real or fake exchange server.
+Resources are now split on whitespace into an array with `read -r -d '' -a` (behind an empty check, with `|| true`), so they are no longer glob-expanded. Upstream split them on whitespace too, so the result is the same. expires_in and granted_scope have \n and \r removed with tr before they are written to GITHUB_OUTPUT.
 
 ### Iteration 2
 
-**Fixes applied:** github-env-injection
+**Fixes applied:** script-injection
 
 **Notes:**
 
-In action.yml login step, expires_in and granted_scope are passed through printf '%s' | tr -d '\n\r' into safe_* variables before being written to GITHUB_OUTPUT. Other behavior unchanged.
+In action.yml, the resource list is now split into an array with `read -r -a` (guarded for an empty value) and the loop runs over the quoted array elements, so glob characters are never expanded. Uses the ${arr[@]+...} form for set -u safety on older bash. Splitting still happens on whitespace, as upstream did (the value was already whitespace-collapsed by xargs).
 
