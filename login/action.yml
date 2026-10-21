@@ -135,14 +135,14 @@ runs:
           echo "::warning::Carabiner narrowed the requested scopes: requested '${requested_scope}', granted '${granted_scope}'"
         fi
 
-        # 3. Mask the carabiner token and publish it to subsequent steps.
+        # 3. Mask the token and export it for subsequent steps.
         echo "::add-mask::${token}"
         printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
         safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
-        echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
-        echo "scope=${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
-        echo "::notice::Logged in to carabiner; token valid for ${expires_in:-unknown}s"
+        printf 'expires-in=%s\n' "${safe_expires_in}" >> "${GITHUB_OUTPUT}"
+        printf 'scope=%s\n' "${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
+        echo "::notice::Logged in to carabiner; token valid for ${safe_expires_in:-unknown}s"
       env:
         INPUTS_EXCHANGE_URL: ${{ inputs.exchange-url }}
         INPUTS_AUDIENCE: ${{ inputs.audience }}
