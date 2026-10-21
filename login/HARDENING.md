@@ -14,38 +14,38 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ## Findings Fixed
 
-### script-injection (severity: high)
-
-Sub-rule (b), an unquoted expansion of untrusted data. `requested_resources` comes from inputs.resource (env INPUTS_RESOURCE, normalized with xargs) and is expanded without quotes in `for res in ${requested_resources}; do`. The shell therefore splits the value on whitespace and also expands glob characters (*, ?, [...]) from the caller's input against the filesystem. Fix: split into an array without globbing, e.g. `read -r -a resources <<< "$requested_resources"` and then `for res in "${resources[@]}"`.
-
-Locations:
-
-- `action.yml:76`
-
 ### github-env-injection (severity: high)
 
-The login step writes `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values are taken with `jq -r` from the HTTP response of the token exchange server, and that server's address is the caller-controlled input `exchange-url`. They are not literals computed in the script, and nothing removes newlines before the write. A response with newlines in .scope or .expires_in could inject extra step outputs. Add the required sanitization first, e.g. `safe_scope=$(printf '%s' "$granted_scope" | tr -d '\n\r')` and `safe_expires=$(printf '%s' "$expires_in" | tr -d '\n\r')`, and write those values instead.
+In the login step, `expires_in` and `granted_scope` come from the token-exchange server's JSON response (`jq -r '.expires_in'` / `jq -r '.scope'`). That server is chosen by the untrusted `inputs.exchange-url`. Both values are written to $GITHUB_OUTPUT with no newline removal: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. A hostile or redirected exchange server could return values containing newlines and add extra step outputs. Fix: strip newlines first, e.g. `safe=$(printf '%s' "$granted_scope" | tr -d '\n\r')`, and do the same for expires_in. (The CARABINER_CREDENTIALS write to GITHUB_ENV is checked against a single-line JWT regex, so it is safe.)
 
 Locations:
 
-- `action.yml:137`
-- `action.yml:138`
+- `action.yml:149`
+- `action.yml:150`
+
+### script-injection (severity: high)
+
+Rule (b): an unquoted shell variable holds untrusted data. `requested_resources` comes from `inputs.resource` (through the INPUTS_RESOURCE env var) and is expanded without quotes in `for res in ${requested_resources}; do`. The shell splits the value on whitespace and also expands glob characters, so input such as `*` or `/etc/*` turns into filenames before being sent as resource parameters. Fix: split the value safely without globbing, e.g. `read -r -a resources <<< "$requested_resources"; for res in "${resources[@]}"; do`.
+
+Locations:
+
+- `action.yml:79`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** github-env-injection, script-injection
 
 **Notes:**
 
-Resources are now split on whitespace into an array with `read -r -d '' -a` (behind an empty check, with `|| true`), so they are no longer glob-expanded. Upstream split them on whitespace too, so the result is the same. expires_in and granted_scope have \n and \r removed with tr before they are written to GITHUB_OUTPUT.
+Strips CR/LF from expires_in and granted_scope before writing them to GITHUB_OUTPUT. Resource list is now split on whitespace with `read -r -d '' -a` (with the -n guard and `|| true`) and iterated as a quoted array, so glob characters are no longer expanded; the empty-array expansion is safe under set -u.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection
+**Fixes applied:** github-env-injection
 
 **Notes:**
 
-In action.yml, the resource list is now split into an array with `read -r -a` (guarded for an empty value) and the loop runs over the quoted array elements, so glob characters are never expanded. Uses the ${arr[@]+...} form for set -u safety on older bash. Splitting still happens on whitespace, as upstream did (the value was already whitespace-collapsed by xargs).
+In action.yml, expires_in and granted_scope now pass through printf '%s' | tr -d '\n\r' right before they are written to $GITHUB_OUTPUT. These are simple variable values, not command substitutions, and the step runs with pipefail, so this does not change how errors are handled.
 
