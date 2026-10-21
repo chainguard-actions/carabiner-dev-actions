@@ -73,13 +73,13 @@ runs:
         # stamp its default (the repository's whole organization).
         requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
+        resources=()
         if [ -n "${requested_resources}" ]; then
-          resource_list=()
-          read -r -d '' -a resource_list <<< "${requested_resources}" || true
-          for res in "${resource_list[@]}"; do
-            resource_args+=(--data-urlencode "resource=${res}")
-          done
+          read -r -d '' -a resources <<< "${requested_resources}" || true
         fi
+        for res in ${resources[@]+"${resources[@]}"}; do
+          resource_args+=(--data-urlencode "resource=${res}")
+        done
         response="$(curl -sS -w '\n%{http_code}' \
           -X POST "${INPUTS_EXCHANGE_URL%/}/token" \
           --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
@@ -139,9 +139,9 @@ runs:
         echo "::add-mask::${token}"
         printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
-        safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
+        safe_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
         echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
-        echo "scope=${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
+        echo "scope=${safe_scope}" >> "${GITHUB_OUTPUT}"
         echo "::notice::Logged in to carabiner; token valid for ${expires_in:-unknown}s"
       env:
         INPUTS_EXCHANGE_URL: ${{ inputs.exchange-url }}
