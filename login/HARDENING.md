@@ -10,26 +10,26 @@
 
 **Harden Agent Version:** `2`
 
-Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 finding(s) were identified and resolved across 2 iteration(s).
+Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### github-env-injection (severity: high)
 
-The composite step 'login' writes values taken from the token-exchange server's response straight to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` step: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. The server is chosen by the workflow-controlled input `exchange-url` (INPUTS_EXCHANGE_URL). `jq -r` decodes JSON strings, so a server that returns embedded newlines in `.scope` or `.expires_in` can inject extra step outputs. The CARABINER_CREDENTIALS write to $GITHUB_ENV is guarded by a single-line JWT regex check, but the two output writes have no guard at all.
+Step 'login' writes values parsed from the token-exchange server's response to $GITHUB_OUTPUT without the printf '%s' ... | tr -d '\n\r' sanitization: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from `jq -r` on a response from the server at inputs.exchange-url, which the caller controls. That response can contain newlines, so a malicious or compromised exchange server could inject extra step outputs. (The CARABINER_CREDENTIALS write to GITHUB_ENV is checked against a strict single-line JWT regex first, so it is safe in practice.)
 
 Locations:
 
-- `action.yml:137`
-- `action.yml:138`
+- `action.yml:134`
+- `action.yml:135`
 
 ### script-injection (severity: high)
 
-Rule (b): unquoted shell expansion of input-derived data. `for res in ${requested_resources}; do` expands `requested_resources`, which comes from INPUTS_RESOURCE (`inputs.resource`), without double quotes. The shell will glob-expand wildcard characters in the input (e.g. `*`) against the runner's filesystem. Splitting on whitespace is intended here, so split into an array with `read -ra` (or turn globbing off with `set -f`) instead of relying on an unquoted expansion.
+Sub-rule (b): an expansion of input-derived data is not quoted. `for res in ${requested_resources}; do` — requested_resources comes from INPUTS_RESOURCE (inputs.resource). Leaving it unquoted means the shell applies word-splitting and glob expansion to the input, so a value like `*` expands to file names in the working directory. Fix: split the value safely without globbing, for example with `read -ra resources <<< "$requested_resources"` and then `for res in "${resources[@]}"`.
 
 Locations:
 
-- `action.yml:76`
+- `action.yml:63`
 
 ## Iteration Notes
 
@@ -39,13 +39,5 @@ Locations:
 
 **Notes:**
 
-The expires-in and scope values from the exchange server now have CR/LF removed with printf '%s' | tr -d '\n\r' before they go to $GITHUB_OUTPUT. The resource input is no longer looped over as an unquoted ${requested_resources}. It is now split into an array with 'read -r -d "" -a ... || true', which only runs when the value isn't empty. It still splits on whitespace the way the old loop did, but wildcards like * are no longer expanded against the runner's files. Nothing was tested or run.
-
-### Iteration 2
-
-**Fixes applied:** github-env-injection
-
-**Notes:**
-
-Fixed the broken block at the end of the login step in action.yml. The `if` around the scope-narrowing warning is now closed with `fi`. Expires-in, the granted scope and the token each go through `printf '%s' | tr -d '\n\r'` before being written. Each write is back on its own line: the token to GITHUB_ENV, the other two to GITHUB_OUTPUT. I deleted the old unsanitized echo lines. I also added `echo "::add-mask::${token}"` before the token is written. The step's own comment says the value is masked, but nothing in the step masked it. Nothing was run to test the change.
+Sanitized expires_in and granted_scope with printf '%s' | tr -d '\n\r' before writing to GITHUB_OUTPUT. Replaced the unquoted `for res in ${requested_resources}` with a guarded `read -r -d '' -a resources <<< ... || true` (whitespace split, no globbing; kept upstream's xargs normalization) and iterate the array using a set -u-safe expansion.
 
