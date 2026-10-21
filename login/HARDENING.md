@@ -16,16 +16,16 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ### github-env-injection (severity: high)
 
-Step 'login' in action.yml writes two values to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` sanitization: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from the token-exchange server's JSON response through `jq -r`. The server is whatever `inputs.exchange-url` points to, so the caller controls it. A response holding a newline would let it inject extra step outputs. The CARABINER_CREDENTIALS write to GITHUB_ENV is checked against a single-line JWT regex first, but these two outputs get no check at all.
+In the 'login' step, two values go into $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` step: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both come from `jq -r` on the token-exchange response. The server that sends that response is picked by the caller through `inputs.exchange-url` (INPUTS_EXCHANGE_URL), and `jq -r` can print text that contains newlines. A hostile or compromised exchange server could therefore add extra step outputs. The CARABINER_CREDENTIALS write to $GITHUB_ENV is checked first against a strict single-line JWT regex, which in practice keeps out newlines. The two output writes have no such check.
 
 Locations:
 
-- `action.yml:135`
-- `action.yml:136`
+- `action.yml:137`
+- `action.yml:138`
 
 ### script-injection (severity: high)
 
-Sub-rule (b) is violated: an input-derived shell variable is expanded without quotes. `requested_resources` comes from `INPUTS_RESOURCE` (`${{ inputs.resource }}`) and is expanded bare in `for res in ${requested_resources}; do`. Without quotes, the shell applies glob/pathname expansion to the input, so a value like `*` or `/etc/*` turns into file names from the runner's disk. Splitting into words should be done safely instead, e.g. `read -r -a resources <<< "$requested_resources"` followed by `for res in "${resources[@]}"`, or by running `set -f` before the loop.
+Sub-rule (b), unquoted expansion of untrusted data. The 'login' step has `for res in ${requested_resources}; do`. `requested_resources` comes from `inputs.resource` (INPUTS_RESOURCE, cleaned up with xargs) and is expanded without quotes, so the shell splits it into words and expands glob characters in the caller's value. The splitting looks deliberate. It should be done safely, for example `read -r -a resources <<< "$requested_resources"` followed by a loop over `"${resources[@]}"`, or by running `set -f` first.
 
 Locations:
 
@@ -39,8 +39,5 @@ Locations:
 
 **Notes:**
 
-Both findings are fixed in action.yml. Nothing was run to test the changes.
-
-- **github-env-injection:** the `expires-in` and `scope` values come from the exchange server's response. Each now goes through `printf '%s' ... | tr -d '\n\r'` before it is written to `$GITHUB_OUTPUT`. A response containing a newline can no longer add extra step outputs.
-- **script-injection:** the resource input used to be split by an unquoted `for res in ${requested_resources}`, which let the shell turn values like `*` into file names. It is now split on whitespace into an array with `read -r -d '' -a resources <<< "$requested_resources" || true`, and only when the value is non-empty. The loop runs over the quoted array with `${resources[@]+"${resources[@]}"}`, a form that also works with `set -u` on bash 3.2. The splitting is the same as before, minus the glob expansion.
+github-env-injection: before `expires_in` and `granted_scope` are written to $GITHUB_OUTPUT, each now goes through `printf '%s' | tr -d '\n\r'` to remove newlines. script-injection: the unquoted `for res in ${requested_resources}` loop no longer expands the value directly. The value is now split into an array with `read -r -d '' -a ... || true`, only when it is non-empty, and the loop runs over `${resources[@]+"${resources[@]}"}`. This still splits on whitespace as before but no longer expands glob characters, and it is safe under `set -u`. I haven't run the action or any tests after the change.
 
