@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-The Docker action's runs.image is 'docker://ghcr.io/carabiner-dev/drop'. It has no tag and no SHA digest, so it resolves to the mutable ':latest' tag. Pin it to a digest, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest>.
+The Docker action's runs.image points to a mutable image with no tag, so it resolves to :latest instead of being pinned to a SHA digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. Pin it to a digest instead, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest>.
 
 Locations:
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. Docker args were left unchanged because they are passed as an argv array with no shell, so they can't be injected into.
+Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f, keeping the docker:// scheme. Docker args were left unchanged because they are passed as argv and no shell runs them.
 
