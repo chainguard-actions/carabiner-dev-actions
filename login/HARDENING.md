@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ### github-env-injection (severity: high)
 
-The 'login' step writes values taken from the token exchange server's response to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` sanitization. The values are `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both come from `jq -r` on a response from a server whose address is the caller-controlled input `inputs.exchange-url`, so they can contain newlines and inject extra outputs. The CARABINER_CREDENTIALS write to GITHUB_ENV on line 136 is protected by a single-line JWT regex check. The two output writes have no protection.
+In the 'login' step, `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"` write values parsed with `jq -r` from the token-exchange response. The server is picked by the untrusted input `inputs.exchange-url`. Nothing removes newlines first (`printf '%s' ... | tr -d '\n\r'`). A hostile or compromised exchange server can put newlines in `.scope` or `.expires_in` and add extra step outputs. Unlike the GITHUB_ENV write of the token, these values are not checked against a regex.
 
 Locations:
 
@@ -25,7 +25,7 @@ Locations:
 
 ### script-injection (severity: high)
 
-Sub-rule (b), unquoted shell expansion of untrusted data. In the 'login' step, `for res in ${requested_resources}; do` expands `requested_resources` without quotes. That variable comes from `INPUTS_RESOURCE` (`inputs.resource`), so the shell word-splits it and expands any glob characters it contains. Fix: split it safely into an array, e.g. `read -ra resources <<< "$requested_resources"`, then loop over `"${resources[@]}"`. Alternatively, turn globbing off with `set -f` before the loop.
+Rule (b), unquoted expansion of untrusted data. In the 'login' step, `for res in ${requested_resources}; do` expands `requested_resources` without quotes. That variable comes from `INPUTS_RESOURCE` (`inputs.resource`). The shell splits the value on whitespace and expands glob characters in it. A safer approach is to split it explicitly, e.g. `read -ra resources <<< "$requested_resources"`, then loop over `"${resources[@]}"`.
 
 Locations:
 
@@ -39,7 +39,11 @@ Locations:
 
 **Notes:**
 
-Sanitized expires_in and granted_scope with printf '%s' | tr -d '\n\r' before writing to GITHUB_OUTPUT. Replaced the unquoted `for res in ${requested_resources}` with a guarded `read -r -d '' -a resources` array split (whitespace, no globbing, || true for set -e) and a set -u safe loop over the array.
+Both fixes are in action.yml, in the 'login' step. I haven't run the action to test them.
+
+1. **Resource list (script-injection):** the loop no longer expands `requested_resources` unquoted. The value is now split into an array with `read -r -d '' -a ... || true`, skipped when the value is empty. The loop then goes over the array using the same `${arr[@]+"${arr[@]}"}` form the step already uses for `scope_args`. That form keeps working under `set -u` when the array is empty. The value is still split on whitespace as before, but glob characters are no longer expanded.
+
+2. **Step outputs (github-env-injection):** newlines and carriage returns are now stripped from `expires_in` and `granted_scope` (`printf '%s' | tr -d '\n\r'`) right before they are written to `$GITHUB_OUTPUT`. The values captured from `jq` are unchanged. That means the scope-narrowing warning still compares the raw value, and the final notice still prints the raw `expires_in`.
 
 ### Iteration 2
 
@@ -47,5 +51,5 @@ Sanitized expires_in and granted_scope with printf '%s' | tr -d '\n\r' before wr
 
 **Notes:**
 
-In action.yml, expires_in and granted_scope are now passed through tr -d '\n\r' just before they are written to $GITHUB_OUTPUT. The original variables are kept for the warning and notice messages. The pipeline runs under set -euo pipefail, so errors are still caught.
+Rebuilt step 3 of the login script in action.yml: the token is masked with ::add-mask:: and written with printf 'CARABINER_CREDENTIALS=%s\n' to GITHUB_ENV (it is already checked against a single-line JWT regex). safe_expires_in and safe_granted_scope are each set on their own line with tr -d '\n\r'. The two old writes that skipped sanitizing were removed, and the notice message now uses safe_expires_in.
 
