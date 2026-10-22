@@ -14,32 +14,32 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ## Findings Fixed
 
-### script-injection (severity: high)
-
-Sub-rule (b): an unquoted shell expansion of input-derived data. `requested_resources` comes from INPUTS_RESOURCE (${{ inputs.resource }}) and is expanded without quotes in `for res in ${requested_resources}; do`. Splitting on spaces is intended here, but the unquoted expansion also expands glob characters (e.g. `*`, `?`, `[...]`) in the caller-supplied input against the filesystem. Split the value safely instead, for example with `set -f` or `read -ra resources <<< "$requested_resources"`, and loop over "${resources[@]}".
-
-Locations:
-
-- `action.yml:76`
-
 ### github-env-injection (severity: high)
 
-Two values are written to $GITHUB_OUTPUT without the `printf '%s' ... | tr -d '\n\r'` step: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both come from the token-exchange server's JSON response (`jq -r '.expires_in'` and `jq -r '.scope'`), and that server is chosen by the caller-controlled input `inputs.exchange-url`. `jq -r` turns embedded \n into real newlines, so a hostile or compromised exchange server could inject extra step outputs. Only the access token is checked to be a single-line JWT before it is written to GITHUB_ENV; these two values are not checked at all.
+The 'login' step writes `expires_in` and `granted_scope` to $GITHUB_OUTPUT without the `printf '%s' ... | tr -d '\n\r'` sanitization step (`echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`). Both values are read with `jq -r` from the response of the server at `inputs.exchange-url`, which the caller controls. A hostile or compromised exchange server can put newlines in `.scope` or `.expires_in` and inject extra step outputs. The token write to GITHUB_ENV is safe because a single-line JWT regex check guards it, but these two writes have no such guard. Fix: `safe=$(printf '%s' "$granted_scope" | tr -d '\n\r')` before writing, and do the same for expires_in.
 
 Locations:
 
 - `action.yml:137`
 - `action.yml:138`
 
+### script-injection (severity: high)
+
+Rule (b) is violated: an expansion of input-derived data is not quoted. `for res in ${requested_resources}; do` expands `requested_resources` (taken from `inputs.resource` via INPUTS_RESOURCE) without double quotes. The shell therefore applies word splitting and pathname/glob expansion to the input value, so glob characters in the input could expand to file names on the runner. Fix: split safely with `read -ra resources <<< "$requested_resources"`, then `for res in "${resources[@]}"`.
+
+Locations:
+
+- `action.yml:76`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** github-env-injection, script-injection
 
 **Notes:**
 
-Resource list is now split into a bash array with `read -r -d '' -a` (guarded for empty, `|| true` for set -e). The loop uses `${resources[@]+"${resources[@]}"}`, so it stays safe under set -u, and glob characters are no longer expanded. expires_in and granted_scope have newlines stripped (`printf '%s' | tr -d '\n\r'`) before being written to GITHUB_OUTPUT.
+Sanitized expires_in and granted_scope with printf '%s' | tr -d '\n\r' before writing to GITHUB_OUTPUT. Replaced the unquoted `for res in ${requested_resources}` with a whitespace split (`read -r -d '' -a`, guarded by an emptiness check, with `|| true`) and iteration over the quoted array using the ${arr[@]+...} form, which is safe under set -u. This keeps upstream's whitespace splitting and removes glob expansion.
 
 ### Iteration 2
 
@@ -47,5 +47,5 @@ Resource list is now split into a bash array with `read -r -d '' -a` (guarded fo
 
 **Notes:**
 
-In action.yml, the loop `for res in ${requested_resources}` is replaced with a guarded `read -r -d '' -a resources <<< "$requested_resources" || true`, followed by a loop over the quoted array elements. The split is still on whitespace, as upstream's was, but glob characters in the input are no longer expanded. The empty-array expansion is written to be safe under `set -u` on older bash versions.
+Replaced `for res in ${requested_resources}` with a guarded `read -r -d '' -a resources` whitespace split (|| true for set -e) and a loop over the quoted array, which works with an empty array under set -u. The value is still split on whitespace as before, but glob characters are no longer expanded.
 
