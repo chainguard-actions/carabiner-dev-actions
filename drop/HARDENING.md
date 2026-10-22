@@ -16,11 +16,11 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-runs.image points to a Docker image without a SHA digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. With no tag, Docker uses the mutable 'latest' tag. Pin it to an immutable digest instead, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest> # <tag>.
+runs.image in the Docker action points to 'docker://ghcr.io/carabiner-dev/drop' with no SHA256 digest and no tag, so it pulls the mutable 'latest' tag. Pin it to an immutable digest, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest> # <tag>.
 
 Locations:
 
-- `action.yml:19`
+- `action.yml:18`
 
 ## Iteration Notes
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. Upstream had no tag, so it used 'latest' by default. The registry has no v1.2.0 tag, so I pinned the current 'latest' digest. Docker args were left as upstream wrote them.
+Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f. I resolved the digest from the 'latest' tag. The docker:// scheme is kept and the tag stays inline. The Docker args are unchanged because the runner passes them to the container directly, with no shell.
 
