@@ -16,16 +16,17 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ### github-env-injection (severity: high)
 
-The 'login' step writes two values taken from the token-exchange server's JSON reply straight into $GITHUB_OUTPUT: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. The server is the one named by the workflow-controlled input `inputs.exchange-url`. `jq -r` turns an escaped newline inside a JSON string into a real newline, so a hostile or compromised exchange server could add extra outputs. The required `printf '%s' ... | tr -d '\n\r'` step is not applied before these writes. The CARABINER_CREDENTIALS write to GITHUB_ENV is checked first against a single-line JWT regex, but the two GITHUB_OUTPUT values are not checked at all.
+The login step in action.yml writes `expires_in` and `granted_scope` to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` step: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from `jq -r` on the JSON response of the exchange server. The caller chooses that server through the `exchange-url` input, so these values are untrusted. A JSON string with embedded newlines can add extra output keys. The CARABINER_CREDENTIALS write to $GITHUB_ENV on line 136 is checked against a single-line JWT regex first, so in practice it is safe. It still does not use the required tr -d sanitization, though, and should get it too.
 
 Locations:
 
 - `action.yml:137`
 - `action.yml:138`
+- `action.yml:136`
 
 ### script-injection (severity: high)
 
-Rule (b), unquoted expansion of untrusted data. The 'login' step has `for res in ${requested_resources}; do`, where `requested_resources` comes from the input `inputs.resource` (via INPUTS_RESOURCE and xargs). The word splitting is intentional, but the unquoted expansion also lets the shell expand glob characters (`*`, `?`, `[...]`) in the input. The fix is to split safely, for example `read -r -a resources <<< "$requested_resources"`, then loop over the quoted array `"${resources[@]}"`.
+Rule (b), unquoted shell expansion of untrusted data, in the login step of action.yml: `for res in ${requested_resources}; do`. `requested_resources` comes from the `resource` input (env INPUTS_RESOURCE) and is expanded without quotes. The shell then word-splits it and expands glob characters such as `*`, `?` and `[`, so the value can turn into file names from the workspace. Split it safely instead, for example `read -ra resources <<< "$requested_resources"; for res in "${resources[@]}"`, or turn off globbing with `set -f`.
 
 Locations:
 
@@ -39,13 +40,13 @@ Locations:
 
 **Notes:**
 
-github-env-injection: expires_in and granted_scope are run through printf '%s' | tr -d '\n\r' before being written to GITHUB_OUTPUT. script-injection: the xargs-normalized resource list is now split into an array with read -r -d '' -a, inside an emptiness guard and with '|| true' (read returns 1 at end of input, which set -e would otherwise treat as a failure). The loop then iterates over ${resources[@]+"${resources[@]}"}, which avoids the set -u failure on empty arrays in older bash. Splitting stays whitespace-based as upstream had it, but there is no more globbing.
+Resources are now split on whitespace into a bash array with `read -r -d '' -a` behind an emptiness guard, so the shell no longer globs them. The array is then expanded quoted, using the set -u-safe ${arr[@]+...} form. The upstream xargs normalization is unchanged. Before CARABINER_CREDENTIALS is written to GITHUB_ENV and expires-in and scope are written to GITHUB_OUTPUT, each value has newlines removed with printf '%s' | tr -d '\n\r'.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection
+**Fixes applied:** github-env-injection
 
 **Notes:**
 
-In action.yml, the resource list is now split with read -r -a into an array, guarded so it only runs on a non-empty value, and the loop goes over the quoted array elements. Splitting on whitespace works as before (xargs has already joined the value into one line), but glob characters are no longer expanded. The ${arr[@]+...} form keeps empty arrays safe under set -u on older bash.
+In action.yml, the 'login' step now passes expires_in and granted_scope through printf '%s' | tr -d '\n\r' before they are written to $GITHUB_OUTPUT. The inputs are both plain variables, so no command substitution is nested inside another and errexit behavior is unchanged.
 
