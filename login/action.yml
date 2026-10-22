@@ -75,7 +75,7 @@ runs:
         resource_args=()
         resources=()
         if [ -n "${requested_resources}" ]; then
-          read -r -d '' -a resources <<< "${requested_resources}" || true
+          read -r -a resources <<< "${requested_resources}" || true
         fi
         for res in ${resources[@]+"${resources[@]}"}; do
           resource_args+=(--data-urlencode "resource=${res}")
@@ -135,7 +135,7 @@ runs:
           echo "::warning::Carabiner narrowed the requested scopes: requested '${requested_scope}', granted '${granted_scope}'"
         fi
 
-        # 3. Mask the carabiner token and publish it to subsequent steps.
+        # 3. Mask the carabiner token and export it for subsequent steps.
         echo "::add-mask::${token}"
         printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
