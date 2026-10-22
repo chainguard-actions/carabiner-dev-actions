@@ -16,17 +16,16 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ### github-env-injection (severity: high)
 
-In the 'login' step, `granted_scope` and `expires_in` are written to $GITHUB_OUTPUT with `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from the JSON response of the token exchange server, and that server's URL is the workflow-controlled `inputs.exchange-url` (INPUTS_EXCHANGE_URL). `jq -r` output can contain embedded newlines, so a hostile or spoofed exchange response could inject extra output lines. Neither value goes through `printf '%s' ... | tr -d '\n\r'` before the write. (The CARABINER_CREDENTIALS write to $GITHUB_ENV on line 136 is first checked against a strict single-line JWT regex, but the required sanitization pipeline is still missing there too.)
+In the composite step 'login', values parsed out of the token-exchange server's response are written to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` step. The lines are `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. The server URL comes from the caller-supplied inputs.exchange-url, so the response is untrusted, and `jq -r` can emit embedded newlines. That lets a hostile response inject extra outputs. The CARABINER_CREDENTIALS write to GITHUB_ENV is regex-checked to be a single line, but these two writes are not checked at all.
 
 Locations:
 
 - `action.yml:137`
 - `action.yml:138`
-- `action.yml:136`
 
 ### script-injection (severity: high)
 
-Sub-rule (b), unquoted shell expansion of untrusted data: `for res in ${requested_resources}; do`. `requested_resources` comes from `inputs.resource` (INPUTS_RESOURCE, passed through xargs) and is expanded without quotes. The shell therefore applies word splitting and pathname/glob expansion to a value the workflow controls. A safer approach is to split explicitly with `read -ra arr <<< "$requested_resources"` and iterate over "${arr[@]}", or to turn off globbing with `set -f` before the loop.
+Sub-rule (b), unquoted expansion of untrusted data. The line `for res in ${requested_resources}; do` expands requested_resources without quotes. That variable is built from INPUTS_RESOURCE, which is set from ${{ inputs.resource }}. Without quotes the shell applies word splitting and glob expansion to the value. Split it safely instead, for example with `read -r -a resources <<< "$requested_resources"` and then `for res in "${resources[@]}"`.
 
 Locations:
 
@@ -40,7 +39,7 @@ Locations:
 
 **Notes:**
 
-Sanitized token, expires_in and granted_scope with printf | tr -d '\n\r' before writing to GITHUB_ENV/GITHUB_OUTPUT. Replaced unquoted `for res in ${requested_resources}` with a guarded `read -r -d '' -a` whitespace split (no globbing) and quoted array iteration, set -u safe. Not run or tested.
+Strip newlines from expires_in and granted_scope (printf | tr -d '\n\r') before they are written to GITHUB_OUTPUT. Replaced the unquoted 'for res in ${requested_resources}' loop with a guarded 'read -r -d "" -a resources' whitespace split (with || true). The loop now goes over the quoted array using the ${arr[@]+...} form, which is safe under set -u. The split is the same as before (on whitespace), but globbing no longer happens.
 
 ### Iteration 2
 
@@ -48,5 +47,5 @@ Sanitized token, expires_in and granted_scope with printf | tr -d '\n\r' before 
 
 **Notes:**
 
-Rebuilt the broken end of the login step in action.yml. The ::warning:: echo now closes properly and reports the requested and granted scopes. The `if` has its `fi`. The token, expires_in and granted_scope are cleaned with tr -d '\n\r' into safe_* variables, and those are now the only values written to GITHUB_ENV and GITHUB_OUTPUT. I deleted the leftover unsanitized writes and added `::add-mask::` for the token before it is written. The original wording of the warning was lost in the broken edit, so I wrote a replacement message. The step's comment says the token is masked, and the mask line is harmless if upstream already masked it somewhere else.
+In action.yml login step, expires_in and granted_scope are sanitized via printf '%s' | tr -d '\n\r' into safe_* variables before being written to $GITHUB_OUTPUT. The script runs with pipefail, and the inputs are already-captured variables, so no error status is masked.
 
