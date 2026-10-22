@@ -14,34 +14,33 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ## Findings Fixed
 
-### script-injection (severity: high)
-
-Rule (b), unquoted shell variable expansion of untrusted data. In the login step, `requested_resources` comes from `INPUTS_RESOURCE` (`${{ inputs.resource }}`) and is expanded without quotes in `for res in ${requested_resources}; do`. Leaving it unquoted means glob characters in the input (`*`, `?`, `[`) get expanded against the filesystem along with the intended word splitting. Fix: split it safely, e.g. `read -r -a resources <<< "$requested_resources"` then `for res in "${resources[@]}"`, or turn globbing off with `set -f`.
-
-Locations:
-
-- `action.yml:82`
-
 ### github-env-injection (severity: high)
 
-The login step writes values to $GITHUB_OUTPUT without the required `printf '%s' ... | tr -d '\n\r'` sanitization: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from `jq -r` on the response of a server whose URL is set by the workflow (`inputs.exchange-url`). A JSON string with embedded newlines can therefore add extra output lines. Only the CARABINER_CREDENTIALS write to GITHUB_ENV is checked against a single-line JWT regex; these two outputs get no such check. Fix: sanitize each value first, e.g. `safe_scope=$(printf '%s' "$granted_scope" | tr -d '\n\r')`, and the same for expires_in.
+In the 'login' step, `expires_in` and `granted_scope` are written straight to $GITHUB_OUTPUT with no `printf '%s' ... | tr -d '\n\r'` cleanup: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values are parsed with jq -r from the JSON returned by the token exchange server, and the calling workflow picks that server through inputs.exchange-url. A hostile response can put embedded newlines in these strings and inject extra or overriding step outputs. The access token gets a single-line regex check before it is written to GITHUB_ENV, but these two values get no check at all. Fix: run each value through `printf '%s' "$v" | tr -d '\n\r'` before writing it.
 
 Locations:
 
 - `action.yml:137`
 - `action.yml:138`
 
+### script-injection (severity: high)
+
+Rule (b) is violated: input-derived data is expanded without quotes. In `for res in ${requested_resources}; do`, `requested_resources` comes from inputs.resource (via the INPUTS_RESOURCE env var) and is expanded unquoted. Word splitting is intended here, but the unquoted expansion also triggers pathname globbing on attacker-controlled input such as `*` or `?`, so filenames from the workspace can end up as resource parameters. Fix: split safely into an array with `read -ra resources <<< "$requested_resources"`, then loop over `"${resources[@]}"`.
+
+Locations:
+
+- `action.yml:76`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** github-env-injection, script-injection
 
 **Notes:**
 
-Fixed both findings in action.yml. Nothing was run or tested.
+Both findings are fixed in action.yml. Nothing was run to test the changes.
 
-**script-injection:** The resource list was expanded unquoted, so `*`, `?` and `[` in the input could match filenames. It is now split into an array with `read -r -d '' -a resources <<< "$requested_resources" || true`, and each element is passed quoted. The `|| true` keeps `set -e` from stopping the step, because `read -d ''` returns 1 when it reaches the end of input. An empty input is skipped. The loop also works with `set -u` on bash 3.2 (the macOS version). Splitting is still on whitespace, as before.
-
-**github-env-injection:** `expires_in` and `granted_scope` now go through `printf '%s' ... | tr -d '\n\r'` before they are written to `$GITHUB_OUTPUT`.
+- **github-env-injection:** `expires_in` and `granted_scope` are now passed through `printf '%s' ... | tr -d '\n\r'` before they are written to $GITHUB_OUTPUT. A hostile token-exchange response can no longer add or override step outputs with embedded newlines.
+- **script-injection:** the resource list is now read into an array with `read -r -d '' -a resources <<< "$requested_resources" || true`, guarded by a check for an empty value. The loop runs over `${resources[@]+"${resources[@]}"}`. This still splits on whitespace as upstream did, but stops values like `*` or `?` from expanding to workspace filenames. The `${arr[@]+...}` form keeps an empty list working under `set -u` on bash older than 4.4 (macOS runners ship 3.2). The `|| true` stops `set -e` from failing the step when `read` reaches the end of input.
 
