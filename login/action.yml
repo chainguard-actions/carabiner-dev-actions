@@ -74,9 +74,9 @@ runs:
         requested_resources="$(printf '%s' "${INPUTS_RESOURCE}" | xargs)"
         resource_args=()
         if [ -n "${requested_resources}" ]; then
-          res_arr=()
-          read -r -d '' -a res_arr <<< "${requested_resources}" || true
-          for res in "${res_arr[@]}"; do
+          resources=()
+          read -r -d '' -a resources <<< "${requested_resources}" || true
+          for res in "${resources[@]}"; do
             resource_args+=(--data-urlencode "resource=${res}")
           done
         fi
