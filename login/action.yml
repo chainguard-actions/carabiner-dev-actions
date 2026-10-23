@@ -76,7 +76,7 @@ runs:
         if [ -n "${requested_resources}" ]; then
           resources=()
           read -r -d '' -a resources <<< "${requested_resources}" || true
-          for res in "${resources[@]}"; do
+          for res in ${resources[@]+"${resources[@]}"}; do
             resource_args+=(--data-urlencode "resource=${res}")
           done
         fi
@@ -137,10 +137,9 @@ runs:
 
         # 3. Mask the carabiner token and publish it to subsequent steps.
         echo "::add-mask::${token}"
-        safe_token="$(printf '%s' "${token}" | tr -d '\n\r')"
+        printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
         safe_granted_scope="$(printf '%s' "${granted_scope}" | tr -d '\n\r')"
-        printf 'CARABINER_CREDENTIALS=%s\n' "${safe_token}" >> "${GITHUB_ENV}"
         echo "expires-in=${safe_expires_in}" >> "${GITHUB_OUTPUT}"
         echo "scope=${safe_granted_scope}" >> "${GITHUB_OUTPUT}"
         echo "::notice::Logged in to carabiner; token valid for ${expires_in:-unknown}s"
