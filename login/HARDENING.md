@@ -16,20 +16,20 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ### github-env-injection (severity: high)
 
-Step 'login' writes `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"` without cleaning the values first. Both come from `jq -r` on the JSON response of the server at `inputs.exchange-url`, which the caller controls. A hostile or compromised server could return a value with newlines (e.g. "scope": "x\nexpires-in=...") and inject extra step outputs. Only the token written to GITHUB_ENV is checked against the JWT regex. Fix: run each value through `printf '%s' "$v" | tr -d '\n\r'` right before writing it.
+In the composite step 'login' in action.yml, `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` (line 137) and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"` (line 138) write values taken from the token-exchange server's JSON (`jq -r '.expires_in'` / `jq -r '.scope'`). The server address comes from the workflow-controlled input `inputs.exchange-url` (INPUTS_EXCHANGE_URL), so whoever controls that input controls the response. `jq -r` turns an embedded \n in a JSON string into a real newline, which would let extra output lines be injected. Neither value goes through the required `printf '%s' ... | tr -d '\n\r'` before the write. The CARABINER_CREDENTIALS write on line 136 is already checked against a strict single-line JWT regex, but it would also be more robust with the standard sanitization pipeline.
 
 Locations:
 
-- `action.yml:147`
-- `action.yml:148`
+- `action.yml:137`
+- `action.yml:138`
 
 ### script-injection (severity: high)
 
-Rule (b), unquoted shell variable expansion: `for res in ${requested_resources}; do` expands `requested_resources`, which comes from `inputs.resource` (via INPUTS_RESOURCE and xargs), without quotes. The shell splits the value into words and also expands glob patterns, so a caller-supplied value like `*` or `/etc/*` becomes file paths that get sent as resource parameters. Fix: split it safely, e.g. `read -r -a resources <<< "$requested_resources"`, then loop over `"${resources[@]}"` (or turn globbing off with `set -f`).
+Sub-rule (b), unquoted expansion of untrusted data: `for res in ${requested_resources}; do` (line 76). `requested_resources` comes from `inputs.resource` (INPUTS_RESOURCE) after normalization with xargs, and it is expanded without quotes. Word splitting is intended here, but glob characters in the input (for example `*` or `?`) will still be expanded against the filesystem, because `set -f` is not enabled. Read the values into an array safely instead, e.g. `read -r -a resources <<< "$requested_resources"`, and loop over `"${resources[@]}"`, or turn off globbing with `set -f` around the loop.
 
 Locations:
 
-- `action.yml:88`
+- `action.yml:76`
 
 ## Iteration Notes
 
@@ -39,17 +39,13 @@ Locations:
 
 **Notes:**
 
-Fixed both findings in action.yml; nothing was run to test the changes.
-
-1. script-injection: the unquoted `for res in ${requested_resources}` loop was letting glob patterns like `*` turn into file paths. The value is now read into an array with `read -r -d '' -a resources <<< "$requested_resources" || true`, inside a check that it isn't empty. The loop then goes over `${resources[@]+"${resources[@]}"}`. This form is safe under `set -u` with bash 3.2. It still splits on whitespace and newlines the way upstream did, but no longer expands glob patterns.
-
-2. github-env-injection: `expires_in` and `granted_scope` are run through `printf '%s' ... | tr -d '\n\r'` before being written to GITHUB_OUTPUT. I also changed the `::notice::` line to use the cleaned `expires_in`, since it prints that value as a workflow command too.
+github-env-injection: the token, expires_in and granted_scope values now go through printf '%s' | tr -d '\n\r' before they are written to GITHUB_ENV and GITHUB_OUTPUT, and the writes now use printf. Each value is captured in its own assignment, not wrapped inside another command substitution. script-injection: the resource list was looped over unquoted, so glob characters like * or ? could match files. It is now read into an array with read -r -d '' -a, which splits on whitespace the same way the old loop did, using an empty-input guard and '|| true'. The loop then expands the array quoted, written ${resources[@]+"${resources[@]}"} so it doesn't fail under set -u when the list is empty. Each resource is still passed as its own --data-urlencode argument, as before. Nothing was run to test the changes.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection
+**Fixes applied:** github-env-injection
 
 **Notes:**
 
-In action.yml, the line `for res in ${requested_resources}` is replaced. The value is now split on whitespace into an array with `read -r -d '' -a ... || true`, guarded by an emptiness check, and the loop expands the array quoted, written so it works under set -u. Splitting still happens on whitespace as before, but glob characters are no longer expanded.
+In action.yml, the expires_in and granted_scope values from the exchange server response now go through printf '%s' | tr -d '\n\r' before being written to $GITHUB_OUTPUT. The variables are already set, so stripping them cannot hide a failing command.
 
