@@ -135,7 +135,7 @@ runs:
           echo "::warning::Carabiner narrowed the requested scopes: requested '${requested_scope}', granted '${granted_scope}'"
         fi
 
-        # 3. Mask the carabiner token and publish it to subsequent steps.
+        # 3. Mask the token and export it for later steps in this job.
         echo "::add-mask::${token}"
         printf 'CARABINER_CREDENTIALS=%s\n' "${token}" >> "${GITHUB_ENV}"
         safe_expires_in="$(printf '%s' "${expires_in}" | tr -d '\n\r')"
