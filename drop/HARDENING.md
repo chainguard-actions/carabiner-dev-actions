@@ -16,7 +16,7 @@ Action **carabiner-dev--actions--drop/v1.2.0** was hardened automatically. 1 fin
 
 ### unpinned-uses (severity: high)
 
-The Docker action points to a mutable image with no tag and no digest: `image: 'docker://ghcr.io/carabiner-dev/drop'`. With no tag, this resolves to `latest`. Whoever can push to that registry repository can change what code runs. Pin the image to a SHA256 digest, e.g. `docker://ghcr.io/carabiner-dev/drop@sha256:<digest> # <tag>`.
+runs.image in the Docker action points to 'docker://ghcr.io/carabiner-dev/drop' with no tag and no SHA digest, so it resolves to the mutable ':latest' tag. Pin it to a digest, e.g. ghcr.io/carabiner-dev/drop@sha256:<digest>.
 
 Locations:
 
@@ -30,5 +30,5 @@ Locations:
 
 **Notes:**
 
-Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f, the digest :latest currently resolves to. There is no v1.2.0 image tag on the registry, so I used latest. I didn't change runs.args: Docker args are passed straight to the container without a shell, so they can't be used for command injection.
+Pinned runs.image to docker://ghcr.io/carabiner-dev/drop:latest@sha256:56b3fb14a90e92a268ddebf864bc80f84b2488cba09ea3cacbc2753cc838a56f (digest from a registry lookup). I left the Docker args alone because they reach the container as separate arguments with no shell in between, so the expressions in them can't inject commands.
 
