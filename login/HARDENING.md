@@ -14,32 +14,31 @@ Action **carabiner-dev--actions--login/v1.2.6** was hardened automatically. 2 fi
 
 ## Findings Fixed
 
-### github-env-injection (severity: high)
-
-Step 'login' writes values to $GITHUB_OUTPUT without the required printf '%s' ... | tr -d '\n\r' step: `echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`. Both values come from `jq -r` on the response of the token exchange server. That server's address comes from the caller-controlled input `inputs.exchange-url` (via INPUTS_EXCHANGE_URL). jq -r prints JSON string escapes like \n as real newlines, so a hostile or compromised server could add extra output lines. The CARABINER_CREDENTIALS write to GITHUB_ENV is guarded by an anchored single-line JWT regex, but expires_in and granted_scope have no such guard. Fix: run each value through printf '%s' "$v" | tr -d '\n\r' just before writing it.
-
-Locations:
-
-- `action.yml:138`
-- `action.yml:139`
-
 ### script-injection (severity: high)
 
-Sub-rule (b): an unquoted expansion of input-derived data. `for res in ${requested_resources}; do` expands requested_resources, which comes from INPUTS_RESOURCE (inputs.resource), without quotes. The word splitting is intended, but the shell also expands glob characters in the value. Fix: split safely with `read -ra resources <<< "$requested_resources"` and loop over "${resources[@]}" (or turn off globbing with set -f).
+Rule (b) violated: an expansion of workflow-controlled data is unquoted. `requested_resources` comes from INPUTS_RESOURCE (${{ inputs.resource }}) via xargs and is expanded without quotes in `for res in ${requested_resources}; do`. Word-splitting appears to be intended, but the shell also performs glob/pathname expansion on the value, so input containing glob characters (e.g. `*`) is expanded against the filesystem. Safer: split with `read -r -a resources <<< "$requested_resources"` and loop over "${resources[@]}", or turn globbing off with `set -f`.
 
 Locations:
 
-- `action.yml:77`
+- `action.yml:82`
+
+### github-env-injection (severity: high)
+
+The login step writes `expires_in` and `granted_scope` to $GITHUB_OUTPUT (`echo "expires-in=${expires_in}" >> "${GITHUB_OUTPUT}"` and `echo "scope=${granted_scope}" >> "${GITHUB_OUTPUT}"`) without first applying `printf '%s' ... | tr -d '\n\r'`. Both values are taken with `jq -r` from the response of a server whose URL is the untrusted input `inputs.exchange-url`. A hostile or misconfigured server could return strings containing newlines and inject extra step outputs. (The CARABINER_CREDENTIALS write to GITHUB_ENV is checked against an anchored single-line JWT regex first, so it is not flagged.)
+
+Locations:
+
+- `action.yml:141`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** github-env-injection, script-injection
+**Fixes applied:** script-injection, github-env-injection
 
 **Notes:**
 
-Two fixes in action.yml, not run or tested. (1) expires_in and granted_scope now go through printf '%s' | tr -d '\n\r' before they are written to GITHUB_OUTPUT. (2) The unquoted 'for res in ${requested_resources}' loop is replaced with a guarded 'read -r -d "" -a resources' split (with '|| true') and a loop over the quoted array (written in a form that's safe under set -u). It still splits on whitespace like before, but no longer expands globs.
+script-injection: the xargs-normalized resource list is now split into an array with `read -r -d '' -a` (behind an empty-value guard and `|| true`), and the loop runs over the quoted array using a set -u-safe expansion. It still splits on whitespace as before, but glob characters are no longer expanded against the filesystem. github-env-injection: expires_in and granted_scope have \n and \r stripped with printf | tr before they are written to GITHUB_OUTPUT.
 
 ### Iteration 2
 
@@ -47,5 +46,5 @@ Two fixes in action.yml, not run or tested. (1) expires_in and granted_scope now
 
 **Notes:**
 
-In action.yml, the login step now removes \n and \r from expires_in and granted_scope (printf '%s' | tr -d '\n\r') before writing them to GITHUB_OUTPUT. The sanitizing commands run on variables that were already captured, so error handling is the same as before. The CARABINER_CREDENTIALS write to GITHUB_ENV is unchanged because it is already checked against a JWT regex.
+Fixed the broken section 3 of the login step. Restored the token masking (::add-mask::) and the CARABINER_CREDENTIALS write to GITHUB_ENV, using the variable name from README.md. The token was already checked as a single-line JWT. safe_expires_in is now assigned on its own line. Removed the unsanitized expires-in/scope writes. Only the sanitized values (tr -d '\n\r') go to GITHUB_OUTPUT now.
 
